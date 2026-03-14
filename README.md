@@ -146,6 +146,8 @@ The Robotiq 2F-85 is controlled via the **Robotiq Gripper URCap** installed on t
 
 **Prerequisite:** Install the [Robotiq Gripper URCap](https://www.robotiq.com/support/2f-85-2f-140) on the robot (Setup Robot → URCaps). The gripper must be connected (e.g. to the tool flange) and powered.
 
+**If you get "Connection timed out" or "Connection refused":** Port 63352 is only open when a **program that uses the gripper is running** on the robot. On the teach pendant: (1) Create or open a program that includes the **Robotiq Gripper** node (e.g. from the Installation tab). (2) Start that program (Play). The gripper socket server then listens on 63352. You can check the port from your PC with `nc -zv ROBOT_IP 63352` (optional: increase timeout with `python3 ur_gripper.py ROBOT_IP close --timeout 10`).
+
 ### Gripper commands (copy-paste)
 
 Replace `192.168.56.101` with your robot’s IP.
