@@ -1,0 +1,3 @@
+# Standalone scripts using ur_rtde (SDU Robotics)
+# Install: pip install -r requirements.txt
+ur-rtde>=1.5.0
