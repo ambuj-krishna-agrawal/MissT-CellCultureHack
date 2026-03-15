@@ -1,7 +1,7 @@
 import rtde_control
 
 import time
-import socket
+from time import sleep
 
 from robotiq_gripper_control import RobotiqGripper
 from rtde_control import RTDEControlInterface
@@ -72,12 +72,32 @@ def shake(rtde_c, rtde_r, n_shakes=4, tilt_angle=0.15, speed=0.15):
 
 
 def run():
+    # rtde_c, rtde_r, gripper = init_robot()   # step 1
+    # move_inside_incubator(rtde_c, gripper)   # step 2
+    # gripper.close()  # step 3: grip the object
+    # move_outside_incubator(rtde_c, gripper)   # step 3
+    # shake(rtde_c, rtde_r)   # step 4: shake the object
+    # move_towards_opener(rtde_c, gripper)   # step 4
+    # gripper.close()   # step 5
+    # rtde_c.stopScript()
+    # rtde_c.disconnect()
+
+
+
+    # workflow 1
     rtde_c, rtde_r, gripper = init_robot()   # step 1
-    move_inside_incubator(rtde_c, gripper)   # step 2
+    rtde_c.moveJ(OUT_INC_POSE, SPEED, ACCEL)
+    rtde_c.moveL(INS_INC_POSE, SPEED, ACCEL)
     gripper.close()  # step 3: grip the object
-    move_outside_incubator(rtde_c, gripper)   # step 3
-    shake(rtde_c, rtde_r)   # step 4: shake the object
-    move_towards_opener(rtde_c, gripper)   # step 4
+    rtde_c.moveL(OUT_INC_POSE, SPEED, ACCEL)
+    rtde_c.moveJ(TO_MICROSCOPE_POSE, SPEED, ACCEL)
+    gripper.open()
+    sleep(10)
+    gripper.close()
+    rtde_c.moveJ(OUT_INC_POSE, SPEED, ACCEL)
+    rtde_c.moveL(INS_INC_POSE, SPEED, ACCEL)
+    gripper.open()
+    rtde_c.moveL(OUT_INC_POSE, SPEED, ACCEL)
     gripper.close()   # step 5
     rtde_c.stopScript()
     rtde_c.disconnect()
