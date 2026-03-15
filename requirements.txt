@@ -1,3 +1,8 @@
 # Standalone scripts using ur_rtde (SDU Robotics)
 # Install: pip install -r requirements.txt
 ur-rtde>=1.5.0
+
+# Perception (ArUco table + 3D object positions)
+opencv-contrib-python>=4.6.0
+PyYAML>=5.0
+numpy>=1.20.0

@@ -203,6 +203,65 @@ The server expects one ASCII command per line (e.g. `SET ACT 1`, `SET POS 255`, 
 
 ---
 
+## Perception (ArUco table + 3D object positions)
+
+Standalone perception uses a **fixed robot and table** and one **ArUco marker** on the table to get **accurate 3D positions of objects** on the table in the table frame (and optionally in the robot base frame).
+
+### How it works
+
+1. **Table frame**: One ArUco marker is placed on the table. Its pose (from the camera) defines the table coordinate frame: origin at the marker center, Z up. The table plane is `z = 0`.
+2. **Camera**: You need camera intrinsics (matrix + distortion). Calibrate your camera once (e.g. OpenCV `calibrateCamera` or ROS `camera_calibration`) and put the result in `config/camera_intrinsics.yaml`.
+3. **Object positions**: For each detected object (by color blob or by a small ArUco on the object), the pipeline unprojects the pixel to a ray and intersects it with the table plane, then expresses the 3D point in the table frame.
+
+### Setup
+
+1. **Install** (in addition to robot scripts):  
+   `pip install opencv-contrib-python PyYAML`  
+   (Or use the same venv; add these to `requirements.txt` if you use it.)
+
+2. **Calibrate the camera** and save `config/camera_intrinsics.yaml` with `camera_matrix` (3×3) and `dist_coeffs`.
+
+3. **Print the table ArUco marker** and fix it on the table:
+   ```bash
+   cd standalone
+   python -m perception.generate_aruco_marker --id 0 --size-px 400 --output aruco_table.png
+   ```
+   Print the image at 100% scale, measure the black square side in meters, and set `marker_size_m` in `config/aruco_table.yaml`. Set `marker_id` to the same ID (e.g. `0`).
+
+4. **Optional – table → robot base**: If you have a fixed table–robot pose, create a YAML with `translation` (x, y, z) and `rotation` (quaternion x, y, z, w) for table → base_link and pass it with `--table-base`.
+
+### Run
+
+From the **standalone** directory (so the `perception` package is found):
+
+```bash
+# Single image
+python -m perception.run_perception --image path/to/image.png --config-dir config
+
+# One frame from camera
+python -m perception.run_perception --camera 0 --config-dir config
+
+# Color blob detector (default): tune HSV for your objects
+python -m perception.run_perception --image img.png --blob-hsv "0,50,50:30,255,255"
+
+# Write 3D positions to JSON
+python -m perception.run_perception --image img.png --output poses.json
+
+# With table→base transform (output includes base_x, base_y, base_z)
+python -m perception.run_perception --image img.png --table-base config/table_base_tf.yaml --output poses.json
+```
+
+Output is a JSON array of `{ "x", "y", "z", "yaw" }` in the table frame (meters, radians). If `--table-base` is given, each object also has `base_x`, `base_y`, `base_z` in the robot base frame.
+
+### Config files
+
+| File | Purpose |
+|------|--------|
+| `config/camera_intrinsics.yaml` | `camera_matrix` (3×3), `dist_coeffs` |
+| `config/aruco_table.yaml` | `marker_id`, `marker_size_m`, `dictionary` (e.g. DICT_4X4_50) |
+
+---
+
 ## Safety
 
 - Ensure the workspace is clear and the physical **Stop** is within reach.

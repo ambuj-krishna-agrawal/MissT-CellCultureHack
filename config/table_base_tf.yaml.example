@@ -1,0 +1,12 @@
+# Optional: table frame -> robot base_link transform.
+# Copy to table_base_tf.yaml and fill with your calibrated values
+# (e.g. from robot TCP positions at known table points).
+translation:
+  x: 0.0
+  y: 0.0
+  z: 0.0
+rotation:
+  x: 0.0
+  y: 0.0
+  z: 0.0
+  w: 1.0
