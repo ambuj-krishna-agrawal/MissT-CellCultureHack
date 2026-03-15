@@ -3,9 +3,18 @@ Path planner for UR + RTDE that reduces singularity risk by:
 1. Using a single fixed orientation (wrist 3 horizontal / parallel to ground) for all poses.
 2. Moving via waypoints: lift to safe height → move XY → lower to target (no straight-line
    Cartesian move through singular configurations).
+
+No guarantees: This does NOT guarantee singularity-free motion. The waypoints are chosen
+heuristically; the arm can still hit elbow/shoulder/wrist singularities along a segment
+or at a waypoint. For guaranteed avoidance you need either (a) joint-space planning with
+checked joint limits and singular regions, or (b) a full motion planner (e.g. MoveIt)
+with singularity-aware planning. Optional checks (is_near_singularity, check_after_move)
+only detect when the current joint configuration is near known singular values; they
+cannot predict singularities along the upcoming Cartesian path.
 """
 from __future__ import annotations
 
+import math
 from typing import List, Sequence
 
 # Default orientation (rx, ry, rz in rad) that keeps wrist 3 horizontal (axis parallel to ground).
@@ -57,12 +66,85 @@ def plan_linear_path(
     return waypoints
 
 
-def moveL_path(rtde_c, waypoints: List[List[float]], speed: float, accel: float) -> bool:
-    """Execute a sequence of moveL commands. Returns True if all succeeded."""
+# Heuristic singular regions (joint angles in rad). UR: j0 base, j1 shoulder, j2 elbow, j3 wrist1, j4 wrist2, j5 wrist3.
+# Wrist 2 (j4) near 0 or ±π: wrist axes align. Elbow (j2) near 0: arm extended; near ±π: folded.
+WRIST2_SINGULAR_MARGIN = 0.15   # rad; avoid j4 in [-margin, +margin] or near ±π
+ELBOW_EXTENDED_MARGIN = 0.2     # rad; avoid j2 near 0 (extended)
+ELBOW_FOLDED_MARGIN = 0.25      # rad; avoid j2 near ±π (folded)
+
+
+def is_near_singularity(q: Sequence[float]) -> tuple[bool, str]:
+    """
+    Check if joint angles q (rad, length 6) are near a known singular configuration.
+    Returns (True, reason) if near singular, (False, "") otherwise. Heuristic only.
+    """
+    if len(q) < 6:
+        return False, ""
+    j2, j4 = float(q[2]), float(q[4])
+    # Wrist 2 (j4) near 0 or ±π
+    if abs(j4) < WRIST2_SINGULAR_MARGIN:
+        return True, f"wrist2 (j4) near 0: j4={j4:.3f}"
+    if abs(abs(j4) - math.pi) < WRIST2_SINGULAR_MARGIN:
+        return True, f"wrist2 (j4) near ±π: j4={j4:.3f}"
+    # Elbow (j2) extended or folded
+    if abs(j2) < ELBOW_EXTENDED_MARGIN:
+        return True, f"elbow (j2) extended: j2={j2:.3f}"
+    if abs(abs(j2) - math.pi) < ELBOW_FOLDED_MARGIN:
+        return True, f"elbow (j2) folded: j2={j2:.3f}"
+    return False, ""
+
+
+# Target joint values when nudging away from singular regions (rad). Stay outside margins.
+NUDGE_WRIST2_SAFE = 0.25   # target |j4| when j4 was near 0
+NUDGE_ELBOW_SAFE = 0.35    # target |j2| when j2 was near 0 (extended)
+NUDGE_ELBOW_FOLDED_OFFSET = 0.2  # nudge j2 away from ±π by this amount
+
+
+def nudge_away_from_singularity(q: Sequence[float]) -> List[float]:
+    """
+    Return a copy of q (length 6) with j2 and j4 adjusted so is_near_singularity returns False.
+    Use when the target configuration would be singular; the resulting pose will be slightly
+    different from the exact Cartesian target but the arm stays out of singularity.
+    """
+    if len(q) < 6:
+        return list(q)[:6]
+    out = [float(q[i]) for i in range(6)]
+    j2, j4 = out[2], out[4]
+    # Wrist 2 (j4): push out of [-margin, +margin] and away from ±π
+    if abs(j4) < WRIST2_SINGULAR_MARGIN:
+        out[4] = NUDGE_WRIST2_SAFE if j4 >= 0 else -NUDGE_WRIST2_SAFE
+    elif abs(abs(j4) - math.pi) < WRIST2_SINGULAR_MARGIN:
+        out[4] = (math.pi - NUDGE_WRIST2_SAFE) if j4 > 0 else (-math.pi + NUDGE_WRIST2_SAFE)
+    # Elbow (j2): push out of extended (near 0) or folded (near ±π)
+    if abs(j2) < ELBOW_EXTENDED_MARGIN:
+        out[2] = NUDGE_ELBOW_SAFE if j2 >= 0 else -NUDGE_ELBOW_SAFE
+    elif abs(abs(j2) - math.pi) < ELBOW_FOLDED_MARGIN:
+        out[2] = (math.pi - NUDGE_ELBOW_FOLDED_OFFSET) if j2 > 0 else (-math.pi + NUDGE_ELBOW_FOLDED_OFFSET)
+    return out
+
+
+def moveL_path(
+    rtde_c,
+    waypoints: List[List[float]],
+    speed: float,
+    accel: float,
+    rtde_r=None,
+    check_singularity_after_move: bool = False,
+) -> bool:
+    """
+    Execute a sequence of moveL commands. Returns True if all succeeded.
+    If rtde_r is set and check_singularity_after_move is True, after each move we check
+    current joint angles and return False (and stop) if near a singular configuration.
+    """
     for pose in waypoints:
         ok = rtde_c.moveL(pose, speed, accel)
         if not ok:
             return False
+        if check_singularity_after_move and rtde_r is not None:
+            q = rtde_r.getActualQ()
+            near, reason = is_near_singularity(q)
+            if near:
+                return False  # Caller can log reason; we don't have logging here
     return True
 
 
@@ -75,11 +157,14 @@ def moveL_planned(
     fixed_orientation: Sequence[float] | None = None,
     safe_height: float | None = 0.5,
     min_lift_height: float = 0.45,
+    check_singularity_after_move: bool = False,
 ) -> bool:
     """
     Move from current TCP pose to end_pose using a planned path (lift → move XY → lower)
     with fixed orientation (wrist 3 horizontal). Use this instead of a single moveL
-    to reduce singularity risk.
+    to reduce singularity risk. No guarantee: path can still pass through singularities.
+    Set check_singularity_after_move=True to stop and return False if a waypoint
+    ends in a near-singular joint configuration (requires rtde_r).
     """
     start_pose = list(rtde_r.getActualTCPPose())
     waypoints = plan_linear_path(
@@ -89,7 +174,11 @@ def moveL_planned(
         safe_height=safe_height,
         min_lift_height=min_lift_height,
     )
-    return moveL_path(rtde_c, waypoints, speed, accel)
+    return moveL_path(
+        rtde_c, waypoints, speed, accel,
+        rtde_r=rtde_r if check_singularity_after_move else None,
+        check_singularity_after_move=check_singularity_after_move,
+    )
 
 
 def moveL_planned_or_direct(

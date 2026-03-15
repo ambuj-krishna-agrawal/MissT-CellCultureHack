@@ -86,12 +86,42 @@ pip install ur-rtde
 
 **Path planner (singularity / wrist 3 horizontal)**
 
-Scripts like `automate.py` use `path_planner.py` to reduce singularity risk:
+Scripts like `automate.py` use `path_planner.py` to **reduce** singularity risk (there are **no guarantees**):
 
-- **Fixed orientation (wrist 3 horizontal):** All moves use one consistent TCP orientation (`WRIST3_HORIZONTAL_ORIENTATION` in `path_planner.py`), so the last wrist axis stays parallel to the ground and the arm doesn’t flip.
-- **Waypoint path:** Instead of a single straight `moveL` from A to B, the planner runs: current pose → **lift** to a safe height → **move** in XY at that height → **lower** to target. That avoids straight-line Cartesian moves through singular configurations.
+- **Fixed orientation (wrist 3 horizontal):** All moves use one consistent TCP orientation (`WRIST3_HORIZONTAL_ORIENTATION`), so the last wrist axis stays parallel to the ground and the arm doesn’t flip.
+- **Waypoint path:** current pose → **lift** to a safe height → **move** in XY → **lower** to target, to avoid some straight-line Cartesian paths through bad configurations.
+- **Optional post-move check:** `is_near_singularity(q)` and `check_singularity_after_move=True` in `moveL_planned` detect when the **current** joint configuration is near known singular values (wrist 2 near 0/±π, elbow extended/folded). They do **not** predict singularities along the upcoming path; for that you’d need joint-space planning or a full motion planner (e.g. MoveIt).
 
-Tune `path_planner.py`: `WRIST3_HORIZONTAL_ORIENTATION` (rx, ry, rz to match your cell), and in `automate.py`: `SAFE_HEIGHT`, `USE_PLANNED_PATH` (set to `False` to use direct moveL again).
+Tune `path_planner.py`: `WRIST3_HORIZONTAL_ORIENTATION`, and in `automate.py`: `SAFE_HEIGHT`, `USE_PLANNED_PATH`. To enable singularity checks after each waypoint, pass `check_singularity_after_move=True` into `moveL_planned`.
+
+**Guaranteed planner (joint-space, singularity- and limit-safe)**
+
+For **real guarantees** (no path through singularities or joint limits), use the joint-space planner in `path_planner_guaranteed.py`:
+
+1. **Install:** `pip install ikpy` (already in `requirements.txt`).
+2. **URDF:** A minimal UR5 kinematic chain is in `urdf/ur5_minimal.urdf`. For UR10/UR16, add a matching URDF and pass `urdf_path` to the planner.
+3. **Enable in `automate.py`:** Set `USE_GUARANTEED_PLANNER = True`.
+
+The guaranteed planner: (a) gets current joint angles from the robot, (b) computes IK for the target Cartesian pose (with a fixed orientation), (c) plans a straight joint-space segment from start to end, (d) **samples the segment at small steps** and checks every sample for joint limits and singularity (wrist 2, elbow). If any sample fails, the path is rejected (and the move returns False). (e) Executes `moveJ` through the verified waypoints. So **if a path is returned, every commanded configuration is safe**. Environment collision is not checked; for that you’d need a full motion planner (e.g. MoveIt). If ikpy is not installed or planning fails, `automate.py` falls back to the Cartesian waypoint planner.
+
+**Obstacles (guaranteed planner only)**
+
+When using the guaranteed planner you can add obstacles in the **robot base frame** so the planned path avoids them (TCP and all link positions are checked). In code:
+
+```python
+from path_planner_guaranteed import box_obstacle, sphere_obstacle, moveJ_planned
+
+# Axis-aligned box: xmin, ymin, zmin, xmax, ymax, zmax (meters, base frame)
+obs1 = box_obstacle(0.2, -0.3, 0.0, 0.4, 0.3, 0.5)
+# Sphere: center x, y, z and radius (meters)
+obs2 = sphere_obstacle(0.0, 0.0, 0.3, 0.15)
+OBSTACLES = [obs1, obs2]
+
+# Then pass to the planner
+moveJ_planned(rtde_c, rtde_r, target_pose, speed, accel, obstacles=OBSTACLES)
+```
+
+In `automate.py`, set `OBSTACLES = [box_obstacle(...), ...]` at the top; they are used automatically when `USE_GUARANTEED_PLANNER = True`. If the straight joint-space segment would collide with any obstacle, planning returns no path (move fails).
 
 **Arm motion: moveL, moveJ, speedJ**
 
