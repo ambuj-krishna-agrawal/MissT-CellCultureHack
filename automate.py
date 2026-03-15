@@ -15,9 +15,18 @@ NEUTRAL_POSE2 = [0.3, 0.6, 0.5, 3.18, 0.47, -0.148]
 DROP_OFF_POSE = [0.710, -0.3876, -.145, 0, 3.14, 0.0]
 RETURN_POSE = [0.710, -0.3876, 0.08622, 0, 3.14, 0.0]
 
-INS_INC_POSE = [-0.934, -0.567, 0.509, 0.066, 2.280, -2.180]  # inside the incubator pose
-OUT_INC_POSE = [-0.934, -0.381, 0.500, 0.068, 2.282, -2.173]  # outside the incubator pose
-OPENER_POSE = [0.710, -0.3876, 0.08622, 0, 3.14, 0.0]  # opener pose -> random right now
+INS_INC_POSE = [-1.044, -0.578, 0.461, 0.008, -2.123, 2.269]  # inside the incubator pose
+OUT_INC_POSE = [-1.044, -0.298, 0.461, 0.008, -2.123, 2.269]  # outside the incubator pose
+TO_MICROSCOPE_POSE = [-0.215, -0.578, 0.277, 0.008, -2.123, 2.269]  # go to the microscope pose
+TO_OPENER_POSE = [-0.530, -0.0367, 0.165, 0.008, -2.123, 2.269]  # opener pose -> random right now
+
+TO_FRIDGE_POSE = [-0.706, -0.221, -0.338, 0.008, -2.123, 2.269]  # fridge pose -> random right now
+TO_FRIDGE_DOOR_POSE = [-0.706, -0.328, -0.338, 0.008, -2.123, 2.269]  # fridge pose -> random right now
+OPEN_FRIDGE_DOOR_POSE = [-0.924, -0.328, -0.338, 0.008, -2.123, 2.269]  # open the fridge pose -> random right now
+BACK_FROM_FRIDGE_DOOR_POSE = [-0.925, -0.243, -0.338, 0.008, -2.123, 2.269]  # back from the fridge pose -> random right now
+
+TO_AWAY_FROM_REAGENT_POSE = [-0.774, -0.274, -0.131, 0.008, -2.123, 2.269]  # away from the reagent pose -> random right now
+TO_REAGENT_POSE = [-0.774, -0.444, -0.131, 0.008, -2.123, 2.269]  # to the reagent pose -> random right now
 
 
 SPEED = 0.2        # m/s
@@ -63,7 +72,7 @@ def shake(rtde_c, rtde_r, n_shakes=4, tilt_angle=0.15, speed=0.15):
 
 
 def run():
-    rtde_c, rtde_r, gripper = init_robot()   # step 1c
+    rtde_c, rtde_r, gripper = init_robot()   # step 1
     move_inside_incubator(rtde_c, gripper)   # step 2
     gripper.close()  # step 3: grip the object
     move_outside_incubator(rtde_c, gripper)   # step 3
