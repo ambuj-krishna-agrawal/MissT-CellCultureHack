@@ -1,11 +1,15 @@
 import rtde_control
-
 import time
 from time import sleep
 
 from robotiq_gripper_control import RobotiqGripper
 from rtde_control import RTDEControlInterface
 from rtde_receive import RTDEReceiveInterface
+from path_planner import (
+    WRIST3_HORIZONTAL_ORIENTATION,
+    moveL_planned_or_direct,
+    apply_fixed_orientation,
+)
 
 ROBOT_IP = "192.168.12.52"  # change to your robotâ€™s IP
 PORT = 63352            # Robotiq URCap port
@@ -33,6 +37,10 @@ SPEED = 0.2        # m/s
 ACCEL = 0.2        # m/s^2
 FORCE = 20
 
+# Path planner: safe height for lift→move→lower (avoids singularities); fixed orientation = wrist 3 horizontal
+SAFE_HEIGHT = 0.5  # m; tune to clear obstacles
+USE_PLANNED_PATH = True  # use waypoints (lift → move XY → lower) instead of direct moveL
+
 def init_robot():
     # Connect to robot
     rtde_c = RTDEControlInterface(ROBOT_IP)
@@ -45,15 +53,31 @@ def init_robot():
     gripper.open()
     return rtde_c, rtde_r, gripper
 
-def move_inside_incubator(rtde_c, gripper):
-    rtde_c.moveL(INS_INC_POSE, SPEED, ACCEL)
+def move_inside_incubator(rtde_c, rtde_r, gripper):
+    moveL_planned_or_direct(
+        rtde_c, rtde_r, INS_INC_POSE, SPEED, ACCEL,
+        fixed_orientation=WRIST3_HORIZONTAL_ORIENTATION,
+        safe_height=SAFE_HEIGHT,
+        use_planned_path=USE_PLANNED_PATH,
+    )
 
 
-def move_outside_incubator(rtde_c, gripper):
-    rtde_c.moveL(OUT_INC_POSE, SPEED, ACCEL)
+def move_outside_incubator(rtde_c, rtde_r, gripper):
+    moveL_planned_or_direct(
+        rtde_c, rtde_r, OUT_INC_POSE, SPEED, ACCEL,
+        fixed_orientation=WRIST3_HORIZONTAL_ORIENTATION,
+        safe_height=SAFE_HEIGHT,
+        use_planned_path=USE_PLANNED_PATH,
+    )
 
-def move_towards_opener(rtde_c, gripper):
-    rtde_c.moveJ(OPENER_POSE, SPEED, ACCEL)
+
+def move_towards_opener(rtde_c, rtde_r, gripper):
+    moveL_planned_or_direct(
+        rtde_c, rtde_r, TO_OPENER_POSE, SPEED, ACCEL,
+        fixed_orientation=WRIST3_HORIZONTAL_ORIENTATION,
+        safe_height=SAFE_HEIGHT,
+        use_planned_path=USE_PLANNED_PATH,
+    )
 
 
 def shake(rtde_c, rtde_r, n_shakes=4, tilt_angle=0.15, speed=0.15):
@@ -102,9 +126,9 @@ def run():
     # rtde_c.stopScript()
     # rtde_c.disconnect()
 
-    rtde_c.moveL(INS_INC_POSE, SPEED, ACCEL)
+    move_inside_incubator(rtde_c, rtde_r, gripper)
     gripper.close()  # step 3: grip the object
-    rtde_c.moveL(OUT_INC_POSE, SPEED, ACCEL)
+    move_outside_incubator(rtde_c, rtde_r, gripper)
 
 
 if __name__ == "__main__":

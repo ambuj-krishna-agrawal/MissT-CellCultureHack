@@ -84,6 +84,15 @@ pip install -r requirements.txt
 pip install ur-rtde
 ```
 
+**Path planner (singularity / wrist 3 horizontal)**
+
+Scripts like `automate.py` use `path_planner.py` to reduce singularity risk:
+
+- **Fixed orientation (wrist 3 horizontal):** All moves use one consistent TCP orientation (`WRIST3_HORIZONTAL_ORIENTATION` in `path_planner.py`), so the last wrist axis stays parallel to the ground and the arm doesn’t flip.
+- **Waypoint path:** Instead of a single straight `moveL` from A to B, the planner runs: current pose → **lift** to a safe height → **move** in XY at that height → **lower** to target. That avoids straight-line Cartesian moves through singular configurations.
+
+Tune `path_planner.py`: `WRIST3_HORIZONTAL_ORIENTATION` (rx, ry, rz to match your cell), and in `automate.py`: `SAFE_HEIGHT`, `USE_PLANNED_PATH` (set to `False` to use direct moveL again).
+
 **Arm motion: moveL, moveJ, speedJ**
 
 Default is **moveL** (Cartesian left/right poses). You can use **moveJ** (joint targets) or **speedJ** (joint velocities) as in the [ur_rtde examples](https://sdurobotics.gitlab.io/ur_rtde/examples/examples.html):
