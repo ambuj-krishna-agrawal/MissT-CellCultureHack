@@ -1,0 +1,160 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #06060b;
+  --surface: #0d0d14;
+  --surface-2: #12121c;
+  --border: #1a1a2a;
+  --border-subtle: #14141f;
+  --accent: #6366f1;
+  --accent-muted: rgba(99, 102, 241, 0.08);
+}
+
+body {
+  background: var(--bg);
+  color: #e4e4ec;
+  font-family: "DM Sans", system-ui, -apple-system, sans-serif;
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "ss01", "ss02";
+}
+
+@layer base {
+  * { border-color: var(--border); }
+}
+
+@layer utilities {
+  .bg-surface { background-color: var(--surface); }
+  .bg-surface-2 { background-color: var(--surface-2); }
+
+  .glass {
+    background: rgba(13, 13, 20, 0.7);
+    backdrop-filter: blur(16px) saturate(180%);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
+  }
+
+  .glass-subtle {
+    background: rgba(18, 18, 28, 0.5);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+}
+
+/* Progress shimmer for active steps */
+@keyframes shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
+
+.animate-shimmer {
+  animation: shimmer 2s ease-in-out infinite;
+}
+
+/* Gentle pulse ring */
+@keyframes ringPulse {
+  0%, 100% { transform: scale(1); opacity: 0.3; }
+  50%      { transform: scale(1.06); opacity: 0.08; }
+}
+
+.animate-ring-pulse {
+  animation: ringPulse 2.5s ease-in-out infinite;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #1e1e30; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #2a2a40; }
+
+/* Focus ring */
+*:focus-visible {
+  outline: 1px solid rgba(99, 102, 241, 0.5);
+  outline-offset: 1px;
+}
+
+/* Markdown content styling */
+.markdown-content p { margin-bottom: 0.5em; }
+.markdown-content p:last-child { margin-bottom: 0; }
+.markdown-content strong { color: #e4e4ec; font-weight: 600; }
+.markdown-content em { font-style: italic; opacity: 0.85; }
+.markdown-content h1, .markdown-content h2, .markdown-content h3,
+.markdown-content h4, .markdown-content h5 {
+  color: #e4e4ec;
+  font-weight: 600;
+  margin-top: 0.75em;
+  margin-bottom: 0.35em;
+}
+.markdown-content h1 { font-size: 1.25em; }
+.markdown-content h2 { font-size: 1.15em; }
+.markdown-content h3 { font-size: 1.05em; }
+.markdown-content ul, .markdown-content ol {
+  padding-left: 1.25em;
+  margin-bottom: 0.5em;
+}
+.markdown-content ul { list-style-type: disc; }
+.markdown-content ol { list-style-type: decimal; }
+.markdown-content li { margin-bottom: 0.2em; }
+.markdown-content li::marker { color: #52525b; }
+.markdown-content code {
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.15);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  font-size: 0.9em;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  color: #a5b4fc;
+}
+.markdown-content pre {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid #1a1a2a;
+  border-radius: 8px;
+  padding: 0.75em 1em;
+  margin: 0.5em 0;
+  overflow-x: auto;
+}
+.markdown-content pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.85em;
+}
+.markdown-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 0.95em;
+}
+.markdown-content th {
+  text-align: left;
+  padding: 0.4em 0.75em;
+  border-bottom: 1px solid #1a1a2a;
+  color: #a1a1aa;
+  font-weight: 600;
+  font-size: 0.9em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.markdown-content td {
+  padding: 0.35em 0.75em;
+  border-bottom: 1px solid rgba(26,26,42,0.5);
+}
+.markdown-content blockquote {
+  border-left: 3px solid #6366f1;
+  padding-left: 1em;
+  margin: 0.5em 0;
+  color: #a1a1aa;
+  font-style: italic;
+}
+.markdown-content hr {
+  border: none;
+  border-top: 1px solid #1a1a2a;
+  margin: 0.75em 0;
+}
+.markdown-content a {
+  color: #818cf8;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

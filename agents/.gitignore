@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+dist/
+build/
+*.egg-info/
+
+# ROS 2 / colcon
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+
+# Docker
+*.log
+*.tmp
+
+# Cursor / tooling
+.cursor/
+
+node_modules/

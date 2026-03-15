@@ -41,6 +41,7 @@ _robot_lock = threading.Lock()
 _rtde_c = None
 _rtde_r = None
 _gripper = None
+_mock_mode = False
 
 
 def _get_robot():
@@ -98,8 +99,11 @@ def robot_status():
 
 @app.route("/robot/init", methods=["POST"])
 def robot_init():
-    """Initialize robot connection (UR + Robotiq gripper)."""
-    global _rtde_c, _rtde_r, _gripper
+    """Initialize robot connection (UR + Robotiq gripper).
+
+    Falls back to mock mode if the real robot is unreachable.
+    """
+    global _rtde_c, _rtde_r, _gripper, _mock_mode
     try:
         with _robot_lock:
             if _rtde_c is not None:
@@ -110,9 +114,13 @@ def robot_init():
                     pass
                 _rtde_c, _rtde_r, _gripper = None, None, None
             _rtde_c, _rtde_r, _gripper = automate.init_robot()
-        return jsonify({"ok": True, "message": "Robot initialized."})
+        _mock_mode = False
+        return jsonify({"ok": True, "message": "Robot initialized.", "mock": False})
     except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
+        print("Real robot unavailable (%s), using mock mode." % e, flush=True)
+        _mock_mode = True
+        _set_robot("mock", "mock", "mock")
+        return jsonify({"ok": True, "message": "Mock mode — no real robot.", "mock": True})
 
 
 @app.route("/robot/disconnect", methods=["POST"])
@@ -261,6 +269,43 @@ def pour():
 
 
 # ---------- Protocol 2 (streaming) ----------
+
+_MOCK_PROTOCOL_EVENTS = [
+    (1,  "move_outside_incubator",    "UR12e approaching incubator (37\u00b0C, 5% CO\u2082)"),
+    (2,  "move_inside_incubator",     "Reaching into incubator \u2014 locating T75 flask"),
+    (3,  "gripper_close",             "Robotiq gripper secured on flask"),
+    (4,  "move_outside_incubator",    "Extracting flask from incubator"),
+    (5,  "move_to_microscope",        "Transporting flask to Zebra microscope station"),
+    (6,  "gripper_open",              "Flask positioned on microscope stage"),
+    (7,  "imaging",                   "Capturing confluency image \u2014 phase-contrast microscopy"),
+    (8,  "gripper_close",             "Retrieving flask from microscope"),
+    (9,  "move_to_decap_pose_up",     "Navigating to capping station \u2014 approach vector"),
+    (10, "move_to_decap_table",       "Positioning flask in decapping fixture"),
+    (11, "gripper_open",              "Flask seated \u2014 initiating cap removal"),
+    (12, "move_to_decap_away",        "Cap removed \u2014 clearing capping station"),
+    (13, "move_to_fridge",            "Navigating to reagent refrigerator (4\u00b0C)"),
+    (14, "move_to_fridge_door",       "Approaching fridge door mechanism"),
+    (15, "open_fridge_door",          "Opening refrigerator \u2014 accessing Media A"),
+    (16, "back_from_fridge_door",     "Door held open \u2014 preparing to retrieve reagent"),
+    (17, "move_to_away_from_reagent", "Aligning with Media A bottle position"),
+    (18, "move_to_reagent",           "Reaching for Media A (15 mL, room temp equilibrated)"),
+    (19, "gripper_close",             "Media A bottle secured in gripper"),
+    (20, "move_to_away_from_reagent", "Extracting Media A from refrigerator"),
+    (21, "move_to_reagent_table_away","Transporting media to feeding station"),
+    (22, "move_to_reagent_table",     "Positioning at automated pipette station"),
+    (23, "gripper_open",              "Dispensing 15 mL fresh Media A into flask"),
+    (24, "move_to_reagent_table_away","Media change complete \u2014 clearing pipette station"),
+    (25, "move_to_decap_away",        "Returning to capping station with flask cap"),
+    (26, "move_to_decap_table",       "Aligning cap with flask opening"),
+    (27, "gripper_close",             "Cap re-sealed \u2014 sterile closure confirmed"),
+    (28, "move_outside_incubator",    "Transporting flask back to incubator"),
+    (29, "move_inside_incubator",     "Placing flask in incubator (37\u00b0C, 5% CO\u2082, humidified)"),
+    (30, "gripper_open",              "Flask released on incubator shelf"),
+    (31, "move_outside_incubator",    "Arm retracting \u2014 incubator door closing"),
+    (32, "done",                      "Feeding cycle complete \u2014 culture secured in incubator"),
+]
+
+
 @app.route("/protocol/2", methods=["POST"])
 def protocol_2_stream_endpoint():
     """
@@ -274,10 +319,17 @@ def protocol_2_stream_endpoint():
 
     def generate():
         try:
-            rtde_c, rtde_r, gripper = None, None, None
-            for step, name, message in automate.protocol_2_stream(rtde_c, rtde_r, gripper):
-                data = json.dumps({"step": step, "name": name, "message": message})
-                yield f"data: {data}\n\n"
+            if _mock_mode:
+                import time as _time
+                for step, name, message in _MOCK_PROTOCOL_EVENTS:
+                    _time.sleep(0.4)
+                    data = json.dumps({"step": step, "name": name, "message": message})
+                    yield f"data: {data}\n\n"
+            else:
+                for step, name, message in automate.protocol_2_stream(rtde_c, rtde_r, gripper):
+                    data = json.dumps({"step": step, "name": name, "message": message})
+                    yield f"data: {data}\n\n"
+            yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 

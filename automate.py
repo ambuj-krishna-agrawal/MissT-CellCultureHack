@@ -1,3 +1,7 @@
+import logging
+import sys
+import traceback
+
 import rtde_control
 import time
 from time import sleep
@@ -11,33 +15,96 @@ from path_planner import (
     apply_fixed_orientation,
 )
 
-def _move_to_pose(rtde_c, rtde_r, pose, obstacles=None):
-    """Move to Cartesian pose; use guaranteed planner if enabled and available.
-    If target pose would be singular, we use joint-space move to a nudged configuration (TCP slightly off).
-    obstacles: optional list from path_planner_guaranteed (box_obstacle, sphere_obstacle).
-    """
-    def _cartesian_move():
-        return moveL_planned_or_direct(
-            rtde_c, rtde_r, pose, SPEED, ACCEL,
-            fixed_orientation=WRIST3_HORIZONTAL_ORIENTATION,
-            safe_height=SAFE_HEIGHT,
-            use_planned_path=USE_PLANNED_PATH,
-        )
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+    stream=sys.stdout,
+)
+LOG = logging.getLogger("automate")
 
-    # When using Cartesian planner: if target would be singular, use joint move (nudged) instead
+def _move_to_pose(rtde_c, rtde_r, pose, obstacles=None):
+    """Move to Cartesian pose; use guaranteed planner if enabled and available."""
+    current_q = list(rtde_r.getActualQ())
+    current_tcp = list(rtde_r.getActualTCPPose())
+    LOG.debug("_move_to_pose → target=%s, planner=%s",
+              [round(v, 4) for v in pose],
+              "guaranteed" if USE_GUARANTEED_PLANNER else "cartesian")
+    LOG.debug("  current joints: %s", [round(v, 3) for v in current_q])
+    LOG.debug("  current TCP:    %s", [round(v, 4) for v in current_tcp])
+
+    def _cartesian_move():
+        LOG.debug("Using Cartesian moveL (safe_height=%.2f, planned=%s)", SAFE_HEIGHT, USE_PLANNED_PATH)
+        try:
+            result = moveL_planned_or_direct(
+                rtde_c, rtde_r, pose, SPEED, ACCEL,
+                fixed_orientation=WRIST3_HORIZONTAL_ORIENTATION,
+                safe_height=SAFE_HEIGHT,
+                use_planned_path=USE_PLANNED_PATH,
+            )
+            if not result:
+                LOG.error("Cartesian moveL returned False — robot did NOT move!")
+            else:
+                LOG.debug("Cartesian move completed successfully")
+            return result
+        except Exception as e:
+            LOG.error("Cartesian move FAILED: %s\n%s", e, traceback.format_exc())
+            raise
+
     if not USE_GUARANTEED_PLANNER:
         try:
             from path_planner_guaranteed import moveJ_planned, ik_target_would_be_singular
             if ik_target_would_be_singular(rtde_r, pose):
-                return moveJ_planned(rtde_c, rtde_r, pose, SPEED, ACCEL, obstacles=obstacles or OBSTACLES)
-        except Exception:
-            pass
+                LOG.info("Target would be singular — using joint-space moveJ instead")
+                result = moveJ_planned(rtde_c, rtde_r, pose, SPEED, ACCEL, obstacles=obstacles or OBSTACLES)
+                if not result:
+                    LOG.error("Singular-fallback moveJ returned False — robot did NOT move!")
+                return result
+        except Exception as e:
+            LOG.warning("Singularity check failed (%s), falling back to Cartesian", e)
         return _cartesian_move()
+
     try:
-        from path_planner_guaranteed import moveJ_planned
-        return moveJ_planned(rtde_c, rtde_r, pose, SPEED, ACCEL, obstacles=obstacles or OBSTACLES)
+        from path_planner_guaranteed import (
+            moveJ_planned, plan_joint_path_to_pose, compute_ik, _load_chain,
+        )
+        from path_planner import is_near_singularity
+        LOG.debug("Using guaranteed joint-space moveJ")
+
+        chain = _load_chain()
+        end_q = compute_ik(chain, pose, initial_q=current_q)
+        if end_q is None:
+            LOG.error("IK FAILED for target %s — no joint solution found!", [round(v, 4) for v in pose])
+            LOG.error("  Falling back to Cartesian moveL")
+            return _cartesian_move()
+
+        LOG.debug("  IK solution: %s", [round(v, 3) for v in end_q])
+        near, reason = is_near_singularity(end_q.tolist())
+        if near:
+            LOG.warning("  IK solution is near singularity: %s", reason)
+
+        path = plan_joint_path_to_pose(rtde_r, pose, obstacles=obstacles or OBSTACLES)
+        if path is None:
+            LOG.error("Path planning FAILED (singularity/limits/collision along segment)")
+            LOG.error("  start_q=%s", [round(v, 3) for v in current_q])
+            LOG.error("  end_q=  %s", [round(v, 3) for v in end_q])
+            LOG.error("  Falling back to Cartesian moveL")
+            return _cartesian_move()
+
+        LOG.debug("  Path planned OK: %d waypoints", len(path))
+        result = rtde_c.moveJ(path[-1], SPEED, ACCEL)
+        if not result:
+            LOG.error("moveJ returned False — robot did NOT execute the move!")
+        else:
+            LOG.debug("Guaranteed moveJ completed successfully")
+        return result
+
     except ImportError:
+        LOG.warning("path_planner_guaranteed not available, falling back to Cartesian")
         return _cartesian_move()
+    except Exception as e:
+        LOG.error("Guaranteed moveJ FAILED: %s\n%s", e, traceback.format_exc())
+        raise
 
 ROBOT_IP = "192.168.12.52"  # change to your robotâ€™s IP
 PORT = 63352            # Robotiq URCap port
@@ -87,22 +154,38 @@ USE_GUARANTEED_PLANNER = True  # set True for joint-space guaranteed avoidance; 
 try:
     from path_planner_guaranteed import box_obstacle, sphere_obstacle, transform_obstacle_to_base
     OBSTACLES = [
-        box_obstacle(-1.2, -0.34, -0.09, 1.2, -0.32, 0.09),
+        # box_obstacle(-1.2, -0.34, -0.09, 1.2, -0.32, 0.09),
         # If obstacle was defined in table frame: transform_obstacle_to_base(box_obstacle(...), [table_x, table_y, table_z]),
     ]
 except ImportError:
     OBSTACLES = []
 
 def init_robot():
-    # Connect to robot
-    rtde_c = RTDEControlInterface(ROBOT_IP)
-    rtde_r = RTDEReceiveInterface(ROBOT_IP)
-    gripper = RobotiqGripper(rtde_c)
-    
-    # activate gripper
-    # gripper.activate()
-    gripper.set_force(FORCE)
-    gripper.open()
+    LOG.info("Connecting to robot at %s ...", ROBOT_IP)
+    try:
+        rtde_c = RTDEControlInterface(ROBOT_IP)
+        LOG.info("RTDE Control interface connected")
+    except Exception as e:
+        LOG.error("RTDE Control connection FAILED: %s\n%s", e, traceback.format_exc())
+        raise
+
+    try:
+        rtde_r = RTDEReceiveInterface(ROBOT_IP)
+        LOG.info("RTDE Receive interface connected")
+    except Exception as e:
+        LOG.error("RTDE Receive connection FAILED: %s\n%s", e, traceback.format_exc())
+        raise
+
+    try:
+        gripper = RobotiqGripper(rtde_c)
+        gripper.set_force(FORCE)
+        gripper.open()
+        LOG.info("Gripper initialized (force=%d, opened)", FORCE)
+    except Exception as e:
+        LOG.error("Gripper init FAILED: %s\n%s", e, traceback.format_exc())
+        raise
+
+    LOG.info("Robot fully initialized")
     return rtde_c, rtde_r, gripper
 
 def check_incubator_pose_singularity(rtde_r):
@@ -124,72 +207,101 @@ def check_incubator_pose_singularity(rtde_r):
         print("check_incubator_pose_singularity:", e)
 
 
+def _logged_move(name, rtde_c, rtde_r, pose):
+    LOG.info("▶ %s", name)
+    t0 = time.time()
+    try:
+        _move_to_pose(rtde_c, rtde_r, pose)
+        LOG.info("✓ %s completed (%.1fs)", name, time.time() - t0)
+    except Exception as e:
+        LOG.error("✗ %s FAILED after %.1fs: %s", name, time.time() - t0, e)
+        raise
+
+
+def _logged_gripper(action, gripper):
+    LOG.info("▶ gripper.%s()", action)
+    t0 = time.time()
+    try:
+        getattr(gripper, action)()
+        LOG.info("✓ gripper.%s() completed (%.1fs)", action, time.time() - t0)
+    except Exception as e:
+        LOG.error("✗ gripper.%s() FAILED after %.1fs: %s", action, time.time() - t0, e)
+        raise
+
+
 def move_inside_incubator(rtde_c, rtde_r, gripper):
-    _move_to_pose(rtde_c, rtde_r, INS_INC_POSE)
+    _logged_move("move_inside_incubator", rtde_c, rtde_r, INS_INC_POSE)
 
 
 def move_outside_incubator(rtde_c, rtde_r, gripper):
-    _move_to_pose(rtde_c, rtde_r, OUT_INC_POSE)
+    _logged_move("move_outside_incubator", rtde_c, rtde_r, OUT_INC_POSE)
 
 
 def move_towards_opener(rtde_c, rtde_r, gripper):
-    _move_to_pose(rtde_c, rtde_r, TO_OPENER_POSE)
+    _logged_move("move_towards_opener", rtde_c, rtde_r, TO_OPENER_POSE)
 
 
 def move_to_microscope(rtde_c, rtde_r, gripper):
-    _move_to_pose(rtde_c, rtde_r, TO_MICROSCOPE_POSE)
+    _logged_move("move_to_microscope", rtde_c, rtde_r, TO_MICROSCOPE_POSE)
 
 def move_away_from_microscope(rtde_c, rtde_r, gripper):
-    _move_to_pose(rtde_c, rtde_r, AWAY_MICROSCOPE_POSE)
+    _logged_move("move_away_from_microscope", rtde_c, rtde_r, AWAY_MICROSCOPE_POSE)
 
 def move_to_fridge(rtde_c, rtde_r, gripper):
-    _move_to_pose(rtde_c, rtde_r, TO_FRIDGE_POSE)
+    _logged_move("move_to_fridge", rtde_c, rtde_r, TO_FRIDGE_POSE)
 
 def move_to_fridge_door(rtde_c, rtde_r, gripper):
-    _move_to_pose(rtde_c, rtde_r, TO_FRIDGE_DOOR_POSE)
+    _logged_move("move_to_fridge_door", rtde_c, rtde_r, TO_FRIDGE_DOOR_POSE)
 
 def open_fridge_door(rtde_c, rtde_r, gripper):
-    _move_to_pose(rtde_c, rtde_r, OPEN_FRIDGE_DOOR_POSE)
+    _logged_move("open_fridge_door", rtde_c, rtde_r, OPEN_FRIDGE_DOOR_POSE)
 
 def back_from_fridge_door(rtde_c, rtde_r, gripper):
-    _move_to_pose(rtde_c, rtde_r, BACK_FROM_FRIDGE_DOOR_POSE)
+    _logged_move("back_from_fridge_door", rtde_c, rtde_r, BACK_FROM_FRIDGE_DOOR_POSE)
 
 def move_to_away_from_reagent(rtde_c, rtde_r, gripper):
-    _move_to_pose(rtde_c, rtde_r, TO_AWAY_FROM_REAGENT_POSE)
+    _logged_move("move_to_away_from_reagent", rtde_c, rtde_r, TO_AWAY_FROM_REAGENT_POSE)
 
 
 def move_to_reagent(rtde_c, rtde_r, gripper):
-    _move_to_pose(rtde_c, rtde_r, TO_REAGENT_POSE)
+    _logged_move("move_to_reagent", rtde_c, rtde_r, TO_REAGENT_POSE)
 
 
 def move_to_decap_table(rtde_c, rtde_r, gripper):
-    _move_to_pose(rtde_c, rtde_r, TO_DECAP_POSE)
+    _logged_move("move_to_decap_table", rtde_c, rtde_r, TO_DECAP_POSE)
 
 def move_to_decap_away(rtde_c, rtde_r, gripper):
-    _move_to_pose(rtde_c, rtde_r, TO_DECAP_AWAY_POSE)
+    _logged_move("move_to_decap_away", rtde_c, rtde_r, TO_DECAP_AWAY_POSE)
 
 def move_to_decap_pose_up(rtde_c, rtde_r, gripper):
-    _move_to_pose(rtde_c, rtde_r, TO_DECAP_POSE_UP)
+    _logged_move("move_to_decap_pose_up", rtde_c, rtde_r, TO_DECAP_POSE_UP)
 
 def move_to_reagent_table(rtde_c, rtde_r, gripper):
-    _move_to_pose(rtde_c, rtde_r, TO_REAGENT_TABLE_POSE)
+    _logged_move("move_to_reagent_table", rtde_c, rtde_r, TO_REAGENT_TABLE_POSE)
 
 def move_to_reagent_table_away(rtde_c, rtde_r, gripper):
-    _move_to_pose(rtde_c, rtde_r, TO_REAGENT_TABLE_AWAY_POSE)
+    _logged_move("move_to_reagent_table_away", rtde_c, rtde_r, TO_REAGENT_TABLE_AWAY_POSE)
 
 def shake(rtde_c, rtde_r, n_shakes=4, tilt_angle=0.15, speed=0.15):
     """Rotate the gripper along the y-axis, tilting left and right a few times."""
-    pose = list(rtde_r.getActualTCPPose())
-    # pose = [x, y, z, rx, ry, rz]; ry is rotation around y-axis
-    left = pose.copy()
-    right = pose.copy()
-    left[4] += tilt_angle   # tilt one way
-    right[4] -= tilt_angle  # tilt the other way
-    for _ in range(n_shakes):
-        rtde_c.moveL(left, speed, ACCEL)
-        rtde_c.moveL(right, speed, ACCEL)
-    # return to original pose
-    rtde_c.moveL(pose, speed, ACCEL)
+    LOG.info("▶ shake (n=%d, tilt=%.3f, speed=%.3f)", n_shakes, tilt_angle, speed)
+    t0 = time.time()
+    try:
+        pose = list(rtde_r.getActualTCPPose())
+        LOG.debug("Current TCP pose: %s", [round(v, 4) for v in pose])
+        left = pose.copy()
+        right = pose.copy()
+        left[4] += tilt_angle
+        right[4] -= tilt_angle
+        for i in range(n_shakes):
+            LOG.debug("Shake %d/%d", i + 1, n_shakes)
+            rtde_c.moveL(left, speed, ACCEL)
+            rtde_c.moveL(right, speed, ACCEL)
+        rtde_c.moveL(pose, speed, ACCEL)
+        LOG.info("✓ shake completed (%.1fs)", time.time() - t0)
+    except Exception as e:
+        LOG.error("✗ shake FAILED after %.1fs: %s\n%s", time.time() - t0, e, traceback.format_exc())
+        raise
 
 
 def protocol_1_step_1(rtde_c, rtde_r, gripper):
@@ -265,82 +377,111 @@ def protocol_2(rtde_c, rtde_r, gripper):
 
 def protocol_2_stream(rtde_c, rtde_r, gripper):
     """Run protocol 2 and yield (step_index, step_name, message) for streaming progress."""
+    LOG.info("═══ Protocol 2 STARTED ═══")
+    t0 = time.time()
     step = 0
+
     def emit(name, message):
         nonlocal step
         step += 1
+        LOG.info("  [step %d] %s — %s", step, name, message)
         return (step, name, message)
 
-    yield emit("move_outside_incubator", "Moving outside incubator")
-    move_outside_incubator(rtde_c, rtde_r, gripper)
-    yield emit("move_inside_incubator", "Moving inside incubator")
-    move_inside_incubator(rtde_c, rtde_r, gripper)
-    sleep(10)
-    yield emit("gripper_close", "Gripping flask")
-    gripper.close()
-    yield emit("move_outside_incubator", "Moving outside incubator")
-    move_outside_incubator(rtde_c, rtde_r, gripper)
-    sleep(10)
-    yield emit("move_to_microscope", "Moving to microscope")
-    move_to_microscope(rtde_c, rtde_r, gripper)
-    sleep(10)
-    yield emit("gripper_open", "Releasing at microscope")
-    gripper.open()
-    sleep(10)
-    yield emit("imaging", "Imaging (10s)")
-    time.sleep(10)
-    yield emit("gripper_close", "Gripping after imaging")
-    gripper.close()
-    sleep(10)
-    yield emit("move_to_decap_pose_up", "Moving to decap position (up)")
-    move_to_decap_pose_up(rtde_c, rtde_r, gripper)
-    yield emit("move_to_decap_table", "Moving to decap table")
-    move_to_decap_table(rtde_c, rtde_r, gripper)
-    sleep(10)
-    yield emit("gripper_open", "Releasing at decap table")
-    gripper.open()
-    yield emit("move_to_decap_away", "Moving away from decap table")
-    move_to_decap_away(rtde_c, rtde_r, gripper)
+    def do_move(fn, *args):
+        try:
+            fn(*args)
+        except Exception as e:
+            LOG.error("  [step %d] move FAILED: %s\n%s", step, e, traceback.format_exc())
+            raise
 
-    yield emit("move_to_fridge", "Moving to fridge")
-    move_to_fridge(rtde_c, rtde_r, gripper)
-    yield emit("move_to_fridge_door", "Moving to fridge door")
-    move_to_fridge_door(rtde_c, rtde_r, gripper)
-    yield emit("open_fridge_door", "Opening fridge door")
-    open_fridge_door(rtde_c, rtde_r, gripper)
-    yield emit("back_from_fridge_door", "Back from fridge door")
-    back_from_fridge_door(rtde_c, rtde_r, gripper)
-    yield emit("move_to_away_from_reagent", "Moving away from reagent")
-    move_to_away_from_reagent(rtde_c, rtde_r, gripper)
-    yield emit("move_to_reagent", "Moving to reagent")
-    move_to_reagent(rtde_c, rtde_r, gripper)
-    yield emit("gripper_close", "Gripping reagent")
-    gripper.close()
-    yield emit("move_to_away_from_reagent", "Moving away from reagent")
-    move_to_away_from_reagent(rtde_c, rtde_r, gripper)
-    yield emit("move_to_reagent_table_away", "Moving to reagent table (away)")
-    move_to_reagent_table_away(rtde_c, rtde_r, gripper)
-    yield emit("move_to_reagent_table", "Moving to reagent table")
-    move_to_reagent_table(rtde_c, rtde_r, gripper)
-    yield emit("gripper_open", "Dispensing reagent")
-    gripper.open()
-    yield emit("move_to_reagent_table_away", "Moving away from reagent table")
-    move_to_reagent_table_away(rtde_c, rtde_r, gripper)
-    yield emit("move_to_decap_away", "Moving to decap (away)")
-    move_to_decap_away(rtde_c, rtde_r, gripper)
-    yield emit("move_to_decap_table", "Moving to decap table")
-    move_to_decap_table(rtde_c, rtde_r, gripper)
-    yield emit("gripper_close", "Gripping cap")
-    gripper.close()
-    yield emit("move_outside_incubator", "Moving outside incubator")
-    move_outside_incubator(rtde_c, rtde_r, gripper)
-    yield emit("move_inside_incubator", "Moving inside incubator (return flask)")
-    move_inside_incubator(rtde_c, rtde_r, gripper)
-    yield emit("gripper_open", "Releasing flask in incubator")
-    gripper.open()
-    yield emit("move_outside_incubator", "Moving outside incubator (done)")
-    move_outside_incubator(rtde_c, rtde_r, gripper)
-    yield emit("done", "Protocol 2 complete")
+    def do_gripper(action):
+        try:
+            _logged_gripper(action, gripper)
+        except Exception as e:
+            LOG.error("  [step %d] gripper.%s FAILED: %s\n%s", step, action, e, traceback.format_exc())
+            raise
+
+    def do_wait(seconds):
+        LOG.debug("  waiting %.0fs ...", seconds)
+        sleep(seconds)
+
+    try:
+        yield emit("move_outside_incubator", "Moving outside incubator")
+        do_move(move_outside_incubator, rtde_c, rtde_r, gripper)
+        yield emit("move_inside_incubator", "Moving inside incubator")
+        do_move(move_inside_incubator, rtde_c, rtde_r, gripper)
+        do_wait(10)
+        yield emit("gripper_close", "Gripping flask")
+        do_gripper("close")
+        yield emit("move_outside_incubator", "Moving outside incubator")
+        do_move(move_outside_incubator, rtde_c, rtde_r, gripper)
+        do_wait(10)
+        yield emit("move_to_microscope", "Moving to microscope")
+        do_move(move_to_microscope, rtde_c, rtde_r, gripper)
+        do_wait(10)
+        yield emit("gripper_open", "Releasing at microscope")
+        do_gripper("open")
+        do_wait(10)
+        yield emit("imaging", "Imaging (10s)")
+        do_wait(10)
+        yield emit("gripper_close", "Gripping after imaging")
+        do_gripper("close")
+        do_wait(10)
+        yield emit("move_to_decap_pose_up", "Moving to decap position (up)")
+        do_move(move_to_decap_pose_up, rtde_c, rtde_r, gripper)
+        yield emit("move_to_decap_table", "Moving to decap table")
+        do_move(move_to_decap_table, rtde_c, rtde_r, gripper)
+        do_wait(10)
+        yield emit("gripper_open", "Releasing at decap table")
+        do_gripper("open")
+        yield emit("move_to_decap_away", "Moving away from decap table")
+        do_move(move_to_decap_away, rtde_c, rtde_r, gripper)
+
+        yield emit("move_to_fridge", "Moving to fridge")
+        do_move(move_to_fridge, rtde_c, rtde_r, gripper)
+        yield emit("move_to_fridge_door", "Moving to fridge door")
+        do_move(move_to_fridge_door, rtde_c, rtde_r, gripper)
+        yield emit("open_fridge_door", "Opening fridge door")
+        do_move(open_fridge_door, rtde_c, rtde_r, gripper)
+        yield emit("back_from_fridge_door", "Back from fridge door")
+        do_move(back_from_fridge_door, rtde_c, rtde_r, gripper)
+        yield emit("move_to_away_from_reagent", "Moving away from reagent")
+        do_move(move_to_away_from_reagent, rtde_c, rtde_r, gripper)
+        yield emit("move_to_reagent", "Moving to reagent")
+        do_move(move_to_reagent, rtde_c, rtde_r, gripper)
+        yield emit("gripper_close", "Gripping reagent")
+        do_gripper("close")
+        yield emit("move_to_away_from_reagent", "Moving away from reagent")
+        do_move(move_to_away_from_reagent, rtde_c, rtde_r, gripper)
+        yield emit("move_to_reagent_table_away", "Moving to reagent table (away)")
+        do_move(move_to_reagent_table_away, rtde_c, rtde_r, gripper)
+        yield emit("move_to_reagent_table", "Moving to reagent table")
+        do_move(move_to_reagent_table, rtde_c, rtde_r, gripper)
+        yield emit("gripper_open", "Dispensing reagent")
+        do_gripper("open")
+        yield emit("move_to_reagent_table_away", "Moving away from reagent table")
+        do_move(move_to_reagent_table_away, rtde_c, rtde_r, gripper)
+        yield emit("move_to_decap_away", "Moving to decap (away)")
+        do_move(move_to_decap_away, rtde_c, rtde_r, gripper)
+        yield emit("move_to_decap_table", "Moving to decap table")
+        do_move(move_to_decap_table, rtde_c, rtde_r, gripper)
+        yield emit("gripper_close", "Gripping cap")
+        do_gripper("close")
+        yield emit("move_outside_incubator", "Moving outside incubator")
+        do_move(move_outside_incubator, rtde_c, rtde_r, gripper)
+        yield emit("move_inside_incubator", "Moving inside incubator (return flask)")
+        do_move(move_inside_incubator, rtde_c, rtde_r, gripper)
+        yield emit("gripper_open", "Releasing flask in incubator")
+        do_gripper("open")
+        yield emit("move_outside_incubator", "Moving outside incubator (done)")
+        do_move(move_outside_incubator, rtde_c, rtde_r, gripper)
+        yield emit("done", "Protocol 2 complete")
+
+        LOG.info("═══ Protocol 2 COMPLETED (%d steps, %.1fs) ═══", step, time.time() - t0)
+
+    except Exception as e:
+        LOG.error("═══ Protocol 2 ABORTED at step %d after %.1fs: %s ═══", step, time.time() - t0, e)
+        raise
 
 
 def run():
@@ -358,6 +499,7 @@ def run():
 
     # workflow 1
     rtde_c, rtde_r, gripper = init_robot()   # step 1
+    protocol_1(rtde_c, rtde_r, gripper)
     ## rtde_c.moveJ(OUT_INC_POSE, SPEED, ACCEL)  # assume the robot is at the outside of the incubator
     # rtde_c.moveL(INS_INC_POSE, SPEED, ACCEL)
     # gripper.close()  # step 3: grip the object
@@ -396,5 +538,3 @@ def run():
 
 if __name__ == "__main__":
     run()
-
-

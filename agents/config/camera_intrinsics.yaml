@@ -1,0 +1,8 @@
+# Camera intrinsics (pinhole + distortion).
+# Replace with values from your camera calibration (e.g. OpenCV calibrateCamera or ROS camera_calibration).
+# Focal lengths and principal point in pixels; dist_coeffs: k1, k2, p1, p2 [, k3 [, k4, k5, k6]]
+camera_matrix:
+  - [ 500.0,    0.0, 320.0 ]
+  - [   0.0, 500.0, 240.0 ]
+  - [   0.0,    0.0,   1.0 ]
+dist_coeffs: [ 0.0, 0.0, 0.0, 0.0 ]

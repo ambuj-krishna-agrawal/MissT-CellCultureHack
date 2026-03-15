@@ -1,0 +1,846 @@
+{
+  "protocol": {
+    "name": "iPSC_fast Culture, Monitoring & Harvest",
+    "cell_line": "iPSC_fast",
+    "labware": "T75",
+    "surface_area_cm2": 75,
+    "seeding_density_k_per_cm2": 15,
+    "total_cells_seeded": 1125000,
+    "media": "Media A",
+    "dissociation_reagent": "TrypLE",
+    "handling_mode": "fast",
+    "media_volume_mL": 15,
+    "dpbs_wash_mL": 5,
+    "enzyme_volume_mL": 5,
+    "neutralization_volume_mL": 5,
+    "incubation_temp_c": 37,
+    "co2_pct": 5,
+    "enzyme_incubation_minutes": 7
+  },
+
+  "schedule": {
+    "feeding_interval_hours": 24,
+    "estimated_cycles_to_target": 2,
+    "target_confluency_pct": 70,
+    "estimated_protocol_duration_days": 3,
+    "max_protocol_duration_days": 3,
+    "demo_cycle_interval_seconds": 10
+  },
+
+  "phases": [
+    {
+      "id": "phase_1",
+      "name": "Pre-Execution Setup",
+      "description": "Calculate total reagent needs and verify with scientist before starting. After approval, t=0 begins.",
+      "steps": [
+        {
+          "id": "P1_01",
+          "what": "Calculate total reagent volumes for entire protocol",
+          "why": "Pre-compute all media, DPBS, and enzyme volumes across all feeding cycles plus dissociation, with 20% safety margin to prevent running out mid-protocol",
+          "how": {
+            "tool": "calculate_media_volumes",
+            "args": {
+              "labware": "T75",
+              "operation": "full_protocol",
+              "feeding_cycles": 2,
+              "safety_factor": 1.2
+            }
+          }
+        },
+        {
+          "id": "P1_02",
+          "what": "Verify volumes and confirm protocol start",
+          "why": "Final safety checkpoint — scientist reviews reagent volumes and timeline before committing resources",
+          "how": {
+            "tool": "request_human_input",
+            "args": {
+              "message": "## Ready to Start Protocol\n\nPlease verify the reagent volumes and timeline before we begin.\n\n**Timeline:** ~3 days (2 feeding cycles → dissociation → harvest)\n\n**Total Reagents Needed (with 20% safety margin):**\n| Reagent | Volume |\n|---------|--------|\n| Media A | 54 mL |\n| DPBS | 6 mL |\n| TrypLE | 6 mL |\n| Falcon tubes | 1 × 50 mL |",
+              "input_fields": [
+                {
+                  "id": "confirm_start",
+                  "type": "confirm",
+                  "label": "I have verified reagent availability and approve protocol start"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+
+    {
+      "id": "phase_2",
+      "name": "Culture Monitoring & Feeding",
+      "description": "Cyclic monitoring loop: image the culture, assess health, feed if needed. Repeats on feeding schedule until confluence reaches 70%, then proceed to Phase 3. Max duration: 3 days (extension requires scientist authorization).",
+      "loop": {
+        "repeat_from": "P2_01",
+        "exit_condition": "confluence_pct >= 70 → proceed to Phase 3",
+        "abort_condition": "contamination detected and scientist chooses to abort",
+        "max_days_condition": "protocol_day >= max_protocol_duration_days AND confluence_pct < 70 → ask scientist to authorize extra day"
+      },
+      "steps": [
+        {
+          "id": "P2_01",
+          "what": "Check workcell state",
+          "why": "Verify flask location, station availability, and robot readiness before physical operations",
+          "how": {
+            "tool": "get_world_state",
+            "args": {}
+          }
+        },
+        {
+          "id": "P2_02",
+          "what": "Move flask from incubator to microscope",
+          "why": "Position flask for imaging to assess culture health before feeding",
+          "how": {
+            "tool": "pick_and_place",
+            "args": {
+              "object_id": "flask_1",
+              "from_station": "Incubator_Slot_A",
+              "to_station": "Microscope_Stage"
+            }
+          }
+        },
+        {
+          "id": "P2_03",
+          "what": "Capture cell culture image",
+          "why": "Photograph cells at 40x for quantitative confluence and morphology analysis",
+          "how": {
+            "tool": "capture_image",
+            "args": {
+              "purpose": "Pre-feed confluence and viability assessment",
+              "camera_id": "microscope",
+              "mode": "microscopy"
+            }
+          }
+        },
+        {
+          "id": "P2_04",
+          "what": "Analyze cell culture",
+          "why": "Quantify confluence %, evaluate colony morphology, check viability, and screen for contamination",
+          "how": {
+            "tool": "analyze_culture",
+            "args": {
+              "image_id": "${P2_03.image_id}",
+              "flask_id": "flask_1",
+              "cycle_number": "${current_cycle}"
+            }
+          }
+        },
+        {
+          "id": "P2_05",
+          "what": "Evaluate culture health and progress",
+          "why": "Route to contamination handling, max-days authorization, dissociation, or feeding based on analysis",
+          "how": {
+            "type": "decision",
+            "based_on": "P2_04",
+            "branches": [
+              { "condition": "contamination.detected == true", "goto": "P2_05a", "label": "Contamination — alert scientist" },
+              { "condition": "confluence_pct >= 70", "goto": "P3_01", "label": "Target reached — begin dissociation" },
+              { "condition": "protocol_day >= max_protocol_duration_days AND confluence_pct < 70", "goto": "P2_05d", "label": "Max days reached — ask for extension" },
+              { "condition": "confluence_pct < 70", "goto": "P2_06", "label": "Below target — feed and continue" }
+            ]
+          }
+        },
+        {
+          "id": "P2_05a",
+          "what": "Alert: contamination detected",
+          "why": "Contamination compromises the culture — scientist must decide to continue or abort",
+          "how": {
+            "tool": "request_human_input",
+            "args": {
+              "message": "## ⚠️ Contamination Detected\n\nContamination has been identified in flask_1. Debris visible and media color changed from red to yellow (pH drop). Please review the image and decide.",
+              "input_fields": [
+                {
+                  "id": "action",
+                  "type": "select",
+                  "label": "How to proceed?",
+                  "options": [
+                    { "id": "abort", "label": "Abort — dispose flask and start new batch (recommended)" },
+                    { "id": "continue", "label": "Continue monitoring (risk accepted)" }
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "P2_05b",
+          "what": "Route based on contamination decision",
+          "why": "Execute scientist's decision",
+          "how": {
+            "type": "decision",
+            "based_on": "P2_05a",
+            "branches": [
+              { "condition": "action == 'abort'", "goto": "P2_05c", "label": "Dispose flask" },
+              { "condition": "action == 'continue'", "goto": "P2_06", "label": "Continue to feeding" }
+            ]
+          }
+        },
+        {
+          "id": "P2_05c",
+          "what": "Dispose contaminated flask",
+          "why": "Contaminated culture cannot be used — discard to prevent cross-contamination",
+          "how": {
+            "tool": "dispose_flask",
+            "args": {
+              "flask_id": "flask_1",
+              "reason": "contamination_detected"
+            }
+          },
+          "terminates": true
+        },
+
+        {
+          "id": "P2_05d",
+          "what": "Alert: maximum protocol duration reached",
+          "why": "Culture has not reached target confluence within the scheduled timeframe — scientist must authorize extension or accept current yield",
+          "how": {
+            "tool": "request_human_input",
+            "args": {
+              "message": "## ⏰ Maximum Duration Reached\n\nProtocol has reached the maximum scheduled duration of ${max_protocol_duration_days} days, but confluence is still below the 70% target.\n\nCells are healthy — no contamination — just growing slower than expected.",
+              "input_fields": [
+                {
+                  "id": "action",
+                  "type": "select",
+                  "label": "How to proceed?",
+                  "options": [
+                    { "id": "authorize_extra", "label": "Authorize 1 extra day (recommended)" },
+                    { "id": "harvest_now", "label": "Harvest now at current confluence (lower yield)" },
+                    { "id": "abort", "label": "Abort — dispose flask" }
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "P2_05e",
+          "what": "Route based on max-days decision",
+          "why": "Execute scientist's decision on protocol extension",
+          "how": {
+            "type": "decision",
+            "based_on": "P2_05d",
+            "branches": [
+              { "condition": "action == 'authorize_extra'", "goto": "P2_06", "label": "Feed and continue for 1 extra day" },
+              { "condition": "action == 'harvest_now'", "goto": "P3_01", "label": "Proceed to dissociation at current confluence" },
+              { "condition": "action == 'abort'", "goto": "P2_05c", "label": "Dispose flask" }
+            ]
+          }
+        },
+
+        {
+          "id": "P2_06",
+          "what": "Move flask to capping station",
+          "why": "Flask must be decapped before media change — capping station handles cap/decap",
+          "how": {
+            "tool": "pick_and_place",
+            "args": {
+              "object_id": "flask_1",
+              "from_station": "Microscope_Stage",
+              "to_station": "Capping_Station"
+            }
+          }
+        },
+        {
+          "id": "P2_07",
+          "what": "Remove flask cap",
+          "why": "Decap for pipette access to aspirate spent media and add fresh media",
+          "how": {
+            "tool": "run_decap",
+            "args": { "flask_id": "flask_1" }
+          }
+        },
+        {
+          "id": "P2_08",
+          "what": "Move flask to feeding station",
+          "why": "Feeding station has pipette access and waste disposal for media change",
+          "how": {
+            "tool": "pick_and_place",
+            "args": {
+              "object_id": "flask_1",
+              "from_station": "Capping_Station",
+              "to_station": "Feeding_Station"
+            }
+          }
+        },
+        {
+          "id": "P2_09",
+          "what": "Aspirate spent media",
+          "why": "Remove old nutrient-depleted media — metabolic waste inhibits cell growth",
+          "how": {
+            "tool": "pipette_aspirate",
+            "args": {
+              "flask_id": "flask_1",
+              "reagent": "spent_media",
+              "volume_mL": 15
+            }
+          }
+        },
+        {
+          "id": "P2_10",
+          "what": "Add fresh Media A",
+          "why": "Replenish nutrients and growth factors for continued iPSC growth",
+          "how": {
+            "tool": "pipette_add",
+            "args": {
+              "flask_id": "flask_1",
+              "reagent": "Media_A",
+              "volume_mL": 15,
+              "source": "media_a_reservoir"
+            }
+          }
+        },
+        {
+          "id": "P2_11",
+          "what": "Move flask to capping station",
+          "why": "Flask must be recapped before returning to incubator — open flask risks contamination",
+          "how": {
+            "tool": "pick_and_place",
+            "args": {
+              "object_id": "flask_1",
+              "from_station": "Feeding_Station",
+              "to_station": "Capping_Station"
+            }
+          }
+        },
+        {
+          "id": "P2_12",
+          "what": "Replace flask cap",
+          "why": "Seal flask with vented cap for CO₂ exchange during incubation",
+          "how": {
+            "tool": "run_recap",
+            "args": { "flask_id": "flask_1" }
+          }
+        },
+        {
+          "id": "P2_13",
+          "what": "Return flask to incubator",
+          "why": "Flask must incubate at 37°C / 5% CO₂ for cell growth between feeds",
+          "how": {
+            "tool": "pick_and_place",
+            "args": {
+              "object_id": "flask_1",
+              "from_station": "Capping_Station",
+              "to_station": "Incubator_Slot_A"
+            }
+          }
+        },
+        {
+          "id": "P2_14",
+          "what": "Set incubation parameters",
+          "why": "Maintain optimal iPSC culture conditions until next scheduled feed",
+          "how": {
+            "tool": "set_incubation",
+            "args": {
+              "flask_id": "flask_1",
+              "temperature_c": 37.0,
+              "co2_pct": 5.0,
+              "duration_minutes": 0,
+              "mode": "continuous"
+            }
+          }
+        },
+        {
+          "id": "P2_15",
+          "what": "Wait for next feeding cycle",
+          "why": "Cells need uninterrupted incubation between feeds — interval set by feeding schedule",
+          "how": {
+            "type": "wait",
+            "duration": "Next feeding cycle per schedule (24 hours)",
+            "then_repeat_from": "P2_01"
+          }
+        }
+      ]
+    },
+
+    {
+      "id": "phase_3",
+      "name": "Dissociation & Delivery",
+      "description": "Target confluency reached. Detach cells using TrypLE, verify detachment, neutralize enzyme, collect cells into falcon tube, and dispose flask. Flask is at Microscope_Stage from the last Phase 2 analysis.",
+      "steps": [
+        {
+          "id": "P3_01",
+          "what": "Confirm dissociation with scientist",
+          "why": "Dissociation is irreversible — scientist must review confluency data and latest image before committing",
+          "how": {
+            "tool": "request_human_input",
+            "args": {
+              "message": "## Ready for Dissociation\n\nFlask has reached target confluency and is ready for passage.\n\n| Metric | Value |\n|--------|-------|\n| Confluency | ≥70% (threshold reached) |\n| Morphology | Tight colonies, clean edges |\n| Contamination | None |\n\nProceeding will detach all cells using TrypLE. This is **irreversible**.",
+              "input_fields": [
+                {
+                  "id": "dissociation_decision",
+                  "type": "select",
+                  "label": "Proceed with dissociation?",
+                  "options": [
+                    { "id": "proceed", "label": "Yes — begin dissociation" },
+                    { "id": "abort", "label": "No — dispose flask and end" }
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "P3_02",
+          "what": "Route based on dissociation decision",
+          "why": "If scientist declines, safely dispose flask",
+          "how": {
+            "type": "decision",
+            "based_on": "P3_01",
+            "branches": [
+              { "condition": "dissociation_decision == 'abort'", "goto": "P3_ABORT", "label": "Dispose flask" },
+              { "condition": "dissociation_decision == 'proceed'", "goto": "P3_03", "label": "Begin dissociation" }
+            ]
+          }
+        },
+        {
+          "id": "P3_ABORT",
+          "what": "Dispose flask (dissociation declined)",
+          "why": "Culture at high confluency cannot stay much longer — safe disposal",
+          "how": {
+            "tool": "dispose_flask",
+            "args": {
+              "flask_id": "flask_1",
+              "reason": "dissociation_declined"
+            }
+          },
+          "terminates": true
+        },
+
+        {
+          "id": "P3_03",
+          "what": "Move flask to capping station",
+          "why": "Flask must be decapped for pipette access at harvest station",
+          "how": {
+            "tool": "pick_and_place",
+            "args": {
+              "object_id": "flask_1",
+              "from_station": "Microscope_Stage",
+              "to_station": "Capping_Station"
+            }
+          }
+        },
+        {
+          "id": "P3_04",
+          "what": "Remove flask cap",
+          "why": "Decap for wash and enzyme treatment at harvest station",
+          "how": {
+            "tool": "run_decap",
+            "args": { "flask_id": "flask_1" }
+          }
+        },
+        {
+          "id": "P3_05",
+          "what": "Move flask to harvest station",
+          "why": "Harvest station has DPBS, TrypLE, and waste disposal for dissociation workflow",
+          "how": {
+            "tool": "pick_and_place",
+            "args": {
+              "object_id": "flask_1",
+              "from_station": "Capping_Station",
+              "to_station": "Harvest_Station"
+            }
+          }
+        },
+
+        {
+          "id": "P3_06",
+          "what": "Aspirate spent media",
+          "why": "Remove old media — residual serum proteins would inhibit TrypLE enzyme activity",
+          "how": {
+            "tool": "pipette_aspirate",
+            "args": {
+              "flask_id": "flask_1",
+              "reagent": "spent_media",
+              "volume_mL": 15
+            }
+          }
+        },
+        {
+          "id": "P3_07",
+          "what": "Add DPBS wash",
+          "why": "DPBS rinse removes residual media and Ca²⁺/Mg²⁺ ions that inhibit TrypLE",
+          "how": {
+            "tool": "pipette_add",
+            "args": {
+              "flask_id": "flask_1",
+              "reagent": "DPBS",
+              "volume_mL": 5,
+              "source": "dpbs_bottle"
+            }
+          }
+        },
+        {
+          "id": "P3_08",
+          "what": "Gentle swirl for DPBS wash",
+          "why": "Gentle swirling ensures DPBS contacts the entire growth surface to remove residual media",
+          "how": {
+            "tool": "apply_handling",
+            "args": {
+              "flask_id": "flask_1",
+              "mode": "gentle",
+              "duration_seconds": 30
+            }
+          }
+        },
+        {
+          "id": "P3_09",
+          "what": "Aspirate DPBS wash",
+          "why": "Remove DPBS — surface must be clean before enzyme application for optimal TrypLE activity",
+          "how": {
+            "tool": "pipette_aspirate",
+            "args": {
+              "flask_id": "flask_1",
+              "reagent": "DPBS_wash",
+              "volume_mL": 5
+            }
+          }
+        },
+        {
+          "id": "P3_10",
+          "what": "Add TrypLE dissociation enzyme",
+          "why": "TrypLE cleaves cell-surface adhesion proteins to detach cells from the flask surface",
+          "how": {
+            "tool": "pipette_add",
+            "args": {
+              "flask_id": "flask_1",
+              "reagent": "TrypLE",
+              "volume_mL": 5,
+              "source": "tryple_bottle"
+            }
+          }
+        },
+
+        {
+          "id": "P3_11",
+          "what": "Move flask to capping station",
+          "why": "Recap before incubation — sealed environment for enzyme digestion and contamination prevention",
+          "how": {
+            "tool": "pick_and_place",
+            "args": {
+              "object_id": "flask_1",
+              "from_station": "Harvest_Station",
+              "to_station": "Capping_Station"
+            }
+          }
+        },
+        {
+          "id": "P3_12",
+          "what": "Replace flask cap",
+          "why": "Seal flask for safe transport and sterile enzyme incubation",
+          "how": {
+            "tool": "run_recap",
+            "args": { "flask_id": "flask_1" }
+          }
+        },
+        {
+          "id": "P3_13",
+          "what": "Move flask to incubator",
+          "why": "TrypLE requires 37°C to be enzymatically active",
+          "how": {
+            "tool": "pick_and_place",
+            "args": {
+              "object_id": "flask_1",
+              "from_station": "Capping_Station",
+              "to_station": "Incubator_Slot_A"
+            }
+          }
+        },
+        {
+          "id": "P3_14",
+          "what": "Incubate with TrypLE for 7 minutes",
+          "why": "Timed incubation for enzyme digestion — too short leaves cells attached, too long damages them",
+          "how": {
+            "tool": "set_incubation",
+            "args": {
+              "flask_id": "flask_1",
+              "temperature_c": 37.0,
+              "co2_pct": 5.0,
+              "duration_minutes": 7,
+              "mode": "timed"
+            }
+          }
+        },
+
+        {
+          "id": "P3_15",
+          "what": "Move flask to shaker",
+          "why": "Mechanical agitation dislodges enzyme-loosened cells from the surface",
+          "how": {
+            "tool": "pick_and_place",
+            "args": {
+              "object_id": "flask_1",
+              "from_station": "Incubator_Slot_A",
+              "to_station": "Shaker_Platform"
+            }
+          }
+        },
+        {
+          "id": "P3_16",
+          "what": "Apply fast shaking",
+          "why": "Firm tapping dislodges enzyme-loosened cells into suspension",
+          "how": {
+            "tool": "apply_handling",
+            "args": {
+              "flask_id": "flask_1",
+              "mode": "fast",
+              "duration_seconds": 15
+            }
+          }
+        },
+        {
+          "id": "P3_17",
+          "what": "Move flask to microscope",
+          "why": "Must image to verify whether cells have fully detached",
+          "how": {
+            "tool": "pick_and_place",
+            "args": {
+              "object_id": "flask_1",
+              "from_station": "Shaker_Platform",
+              "to_station": "Microscope_Stage"
+            }
+          }
+        },
+        {
+          "id": "P3_18",
+          "what": "Capture image for detachment verification",
+          "why": "Photograph to check if cells are in suspension vs still adhered to surface",
+          "how": {
+            "tool": "capture_image",
+            "args": {
+              "purpose": "Verify cell detachment after TrypLE + shaking",
+              "camera_id": "microscope",
+              "mode": "microscopy"
+            }
+          }
+        },
+        {
+          "id": "P3_19",
+          "what": "Analyze detachment status",
+          "why": "Quantify whether cells are in suspension — determines if additional incubation is needed",
+          "how": {
+            "tool": "analyze_culture",
+            "args": {
+              "image_id": "${P3_18.image_id}",
+              "flask_id": "flask_1",
+              "cycle_number": "${detachment_check_cycle}"
+            }
+          }
+        },
+        {
+          "id": "P3_20",
+          "what": "Evaluate detachment",
+          "why": "If cells are not fully in suspension, re-incubate and re-shake — but avoid over-processing",
+          "how": {
+            "type": "decision",
+            "based_on": "P3_19",
+            "branches": [
+              { "condition": "cells_in_suspension == false", "goto": "P3_20a", "label": "Not detached — re-incubate and re-shake" },
+              { "condition": "cells_in_suspension == true", "goto": "P3_21", "label": "Detached — proceed to collection" }
+            ]
+          }
+        },
+        {
+          "id": "P3_20a",
+          "what": "Return flask to incubator for re-incubation",
+          "why": "Additional enzyme time to detach remaining adherent cells",
+          "how": {
+            "tool": "pick_and_place",
+            "args": {
+              "object_id": "flask_1",
+              "from_station": "Microscope_Stage",
+              "to_station": "Incubator_Slot_A"
+            }
+          }
+        },
+        {
+          "id": "P3_20b",
+          "what": "Re-incubate for 5 minutes",
+          "why": "Shorter re-incubation — most cells already loosened, just need extra time for stubborn patches",
+          "how": {
+            "tool": "set_incubation",
+            "args": {
+              "flask_id": "flask_1",
+              "temperature_c": 37.0,
+              "co2_pct": 5.0,
+              "duration_minutes": 5,
+              "mode": "timed"
+            }
+          },
+          "then_repeat_from": "P3_15"
+        },
+
+        {
+          "id": "P3_21",
+          "what": "Move flask to capping station",
+          "why": "Decap flask for pipette access — neutralization and collection require open flask",
+          "how": {
+            "tool": "pick_and_place",
+            "args": {
+              "object_id": "flask_1",
+              "from_station": "Microscope_Stage",
+              "to_station": "Capping_Station"
+            }
+          }
+        },
+        {
+          "id": "P3_22",
+          "what": "Remove flask cap",
+          "why": "Decap for neutralization and cell collection",
+          "how": {
+            "tool": "run_decap",
+            "args": { "flask_id": "flask_1" }
+          }
+        },
+        {
+          "id": "P3_23",
+          "what": "Move flask to harvest station",
+          "why": "Harvest station has falcon tube holders and pipette for cell collection",
+          "how": {
+            "tool": "pick_and_place",
+            "args": {
+              "object_id": "flask_1",
+              "from_station": "Capping_Station",
+              "to_station": "Harvest_Station"
+            }
+          }
+        },
+        {
+          "id": "P3_24",
+          "what": "Add Media A to neutralize TrypLE",
+          "why": "Equal volume of media stops TrypLE enzyme activity — prevents over-digestion that kills cells",
+          "how": {
+            "tool": "pipette_add",
+            "args": {
+              "flask_id": "flask_1",
+              "reagent": "Media_A",
+              "volume_mL": 5,
+              "source": "media_a_reservoir"
+            }
+          }
+        },
+        {
+          "id": "P3_25",
+          "what": "Validate neutralization",
+          "why": "Scientist visually confirms enzyme activity has stopped and suspension looks healthy before collection",
+          "how": {
+            "tool": "request_human_input",
+            "args": {
+              "message": "## Neutralization Complete\n\nTrypLE neutralized with 5 mL Media A.\n\n**Total suspension:** ~10 mL (5 mL TrypLE + 5 mL Media A + cells)\n\nPlease verify:\n- Uniform suspension, no large clumps\n- No unusual color change\n- Cells appear healthy",
+              "input_fields": [
+                {
+                  "id": "neutralization_ok",
+                  "type": "confirm",
+                  "label": "Neutralization looks good — proceed to collection"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "P3_26",
+          "what": "Collect cells into falcon tube",
+          "why": "Transfer cell suspension into collection vessel — reports cell count and recovery efficiency",
+          "how": {
+            "tool": "collect_cells",
+            "args": {
+              "flask_id": "flask_1",
+              "target_container": "falcon_50mL",
+              "volume_mL": 10
+            }
+          }
+        },
+        {
+          "id": "P3_27",
+          "what": "Notify scientist: cells ready for pickup",
+          "why": "Scientist needs to know cell count, efficiency, and physically collect the falcon tube",
+          "how": {
+            "tool": "request_human_input",
+            "args": {
+              "message": "## ✅ Cells Ready for Collection\n\n| Metric | Value |\n|--------|-------|\n| Total cells | ${P3_26.cell_count} |\n| Viability | ${P3_26.viability_pct}% |\n| Efficiency | ${P3_26.efficiency_pct}% |\n| Container | 50 mL Falcon tube |\n| Location | Harvest Station |\n\nPlease pick up the falcon tube.",
+              "input_fields": [
+                {
+                  "id": "collected",
+                  "type": "confirm",
+                  "label": "I have picked up the falcon tube"
+                }
+              ]
+            }
+          }
+        },
+
+        {
+          "id": "P3_28",
+          "what": "Move flask to capping station",
+          "why": "Recap flask before disposal — biosafety protocol",
+          "how": {
+            "tool": "pick_and_place",
+            "args": {
+              "object_id": "flask_1",
+              "from_station": "Harvest_Station",
+              "to_station": "Capping_Station"
+            }
+          }
+        },
+        {
+          "id": "P3_29",
+          "what": "Replace flask cap",
+          "why": "Seal used flask to contain residual reagents before disposal",
+          "how": {
+            "tool": "run_recap",
+            "args": { "flask_id": "flask_1" }
+          }
+        },
+        {
+          "id": "P3_30",
+          "what": "Dispose used flask",
+          "why": "Experiment complete — discard flask with residual enzyme and media",
+          "how": {
+            "tool": "dispose_flask",
+            "args": {
+              "flask_id": "flask_1",
+              "reason": "experiment_complete"
+            }
+          }
+        }
+      ]
+    },
+
+    {
+      "id": "phase_4",
+      "name": "Completion",
+      "description": "Final state capture and experiment summary.",
+      "steps": [
+        {
+          "id": "P4_01",
+          "what": "Capture final workcell state",
+          "why": "Record final state of all stations and reagent levels for the experiment record",
+          "how": {
+            "tool": "get_world_state",
+            "args": {}
+          }
+        },
+        {
+          "id": "P4_02",
+          "what": "Generate experiment report",
+          "why": "Compile full experiment history — measurements, feeds, images, events — into a single report",
+          "how": {
+            "tool": "get_experiment_log",
+            "args": {
+              "flask_id": "flask_1"
+            }
+          }
+        },
+        {
+          "id": "P4_03",
+          "what": "Complete experiment",
+          "why": "Produce final structured summary with key metrics and outcome for the scientist",
+          "how": {
+            "tool": "complete_experiment"
+          }
+        }
+      ]
+    }
+  ]
+}

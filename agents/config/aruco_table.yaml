@@ -1,0 +1,9 @@
+# ArUco marker used to define the table frame (fixed on the table).
+# Origin at marker center, Z axis up. Objects on the table have z ≈ 0 in this frame.
+marker_id: 0
+marker_size_m: 0.05   # physical size of the marker side in meters
+dictionary: DICT_4X4_50
+
+# Optional: for --detector aruco, IDs of markers on each object (use different ID than marker_id above)
+# object_marker_ids: [ 1, 2, 3 ]
+# object_marker_size_m: 0.02

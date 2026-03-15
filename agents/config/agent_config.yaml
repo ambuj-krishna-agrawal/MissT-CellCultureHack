@@ -1,0 +1,58 @@
+agent:
+  name: "CellCultureAgent"
+  max_iterations: 95
+  sandbox_dir: "./sandbox"
+  working_dir: "./workspace"
+
+llm:
+  active_provider: "cortex"   # test | openai | anthropic | openrouter | cortex
+  temperature: 0.0
+  max_tokens: 4096
+  thinking_budget: 10000    # budget_tokens for Claude extended thinking
+  providers:
+    test:
+      model: "test"
+      base_url: ""
+      api_key_env: ""
+    openai:
+      model: "gpt-4o"
+      base_url: "https://api.openai.com/v1"
+      api_key_env: "OPENAI_API_KEY"
+    anthropic:
+      model: "claude-sonnet-4-20250514"
+      base_url: "https://api.anthropic.com"
+      api_key_env: "ANTHROPIC_API_KEY"
+    openrouter:
+      model: "anthropic/claude-sonnet-4-20250514"
+      base_url: "https://openrouter.ai/api/v1"
+      api_key_env: "OPENROUTER_API_KEY"
+    cortex:
+      model: "claude-sonnet-4-6"
+      snowflake_connection_name: "snowhouse_sales_jwt"
+
+tools:
+  mock_mode: true
+  mock_delay: 0.1              # seconds per tool in mock mode (low when using real LLM)
+  mock_scenario: "contamination"  # premature_harvest | contamination | slow_growth
+  robot_stream_url: "http://localhost:5050"
+  robot:
+    host: "localhost"
+    port: 50051
+    timeout_seconds: 30
+  perception:
+    camera_type: "zebra"
+    camera_host: "localhost"
+    camera_port: 8080
+  mcp:
+    servers: []
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  cors_origins:
+    - "http://localhost:5173"
+    - "http://localhost:3000"
+
+logging:
+  level: "INFO"
+  format: "structured"

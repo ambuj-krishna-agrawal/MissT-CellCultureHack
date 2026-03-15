@@ -4,9 +4,16 @@ __pycache__/
 *.pyo
 .Python
 .venv/
+.venv38/
 venv/
 env/
 *.egg-info/
+
+# Secrets
+agents/.env
+
+# Node
+node_modules/
 
 # Editor / OS
 .DS_Store
