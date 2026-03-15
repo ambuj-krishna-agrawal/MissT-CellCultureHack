@@ -191,26 +191,48 @@ def shake(rtde_c, rtde_r, n_shakes=4, tilt_angle=0.15, speed=0.15):
     # return to original pose
     rtde_c.moveL(pose, speed, ACCEL)
 
-def protocol_1(rtde_c, rtde_r, gripper):
-    move_outside_incubator(rtde_c, rtde_r, gripper)  # step 1
+
+def protocol_1_step_1(rtde_c, rtde_r, gripper):
+    move_outside_incubator(rtde_c, rtde_r, gripper)
     move_inside_incubator(rtde_c, rtde_r, gripper)
+    return "The robot is now inside the incubator"
+
+def protocol_1_step_2(rtde_c, rtde_r, gripper):
     gripper.close()
-    move_outside_incubator(rtde_c, rtde_r, gripper) 
+    return "The robot is now gripping the object, and is now moving to the microscope"
+
+def protocol_1_step_3(rtde_c, rtde_r, gripper):
+    move_outside_incubator(rtde_c, rtde_r, gripper)
     move_to_microscope(rtde_c, rtde_r, gripper)
+    return "The robot is now at the microscope, Imaging will be done now"
+
+def protocol_1_step_4(rtde_c, rtde_r, gripper):
     gripper.open()
     time.sleep(10)
     gripper.close()
+    return "Imaging complete, QC is running now"
+
+def protocol_1_step_5(rtde_c, rtde_r, gripper):
     move_outside_incubator(rtde_c, rtde_r, gripper)
     move_inside_incubator(rtde_c, rtde_r, gripper)
     gripper.open()
     move_outside_incubator(rtde_c, rtde_r, gripper)
+    return "The T-flask is back in the incubator, ending the protocol"
+
+def protocol_1(rtde_c, rtde_r, gripper):
+    protocol_1_step_1(rtde_c, rtde_r, gripper)
+    protocol_1_step_2(rtde_c, rtde_r, gripper)
+    protocol_1_step_3(rtde_c, rtde_r, gripper)
+    protocol_1_step_4(rtde_c, rtde_r, gripper)
+    protocol_1_step_5(rtde_c, rtde_r, gripper)
+    return "The protocol is complete"
     
 
 def protocol_2(rtde_c, rtde_r, gripper):
     move_outside_incubator(rtde_c, rtde_r, gripper)  # step 1
     move_inside_incubator(rtde_c, rtde_r, gripper)
     gripper.close()
-    move_outside_incubator(rtde_c, rtde_r, gripper) 
+    move_outside_incubator(rtde_c, rtde_r, gripper)
     move_to_microscope(rtde_c, rtde_r, gripper)
     gripper.open()
     time.sleep(10)
@@ -239,6 +261,86 @@ def protocol_2(rtde_c, rtde_r, gripper):
     move_inside_incubator(rtde_c, rtde_r, gripper)
     gripper.open()
     move_outside_incubator(rtde_c, rtde_r, gripper)
+
+
+def protocol_2_stream(rtde_c, rtde_r, gripper):
+    """Run protocol 2 and yield (step_index, step_name, message) for streaming progress."""
+    step = 0
+    def emit(name, message):
+        nonlocal step
+        step += 1
+        return (step, name, message)
+
+    yield emit("move_outside_incubator", "Moving outside incubator")
+    move_outside_incubator(rtde_c, rtde_r, gripper)
+    yield emit("move_inside_incubator", "Moving inside incubator")
+    move_inside_incubator(rtde_c, rtde_r, gripper)
+    sleep(10)
+    yield emit("gripper_close", "Gripping flask")
+    gripper.close()
+    yield emit("move_outside_incubator", "Moving outside incubator")
+    move_outside_incubator(rtde_c, rtde_r, gripper)
+    sleep(10)
+    yield emit("move_to_microscope", "Moving to microscope")
+    move_to_microscope(rtde_c, rtde_r, gripper)
+    sleep(10)
+    yield emit("gripper_open", "Releasing at microscope")
+    gripper.open()
+    sleep(10)
+    yield emit("imaging", "Imaging (10s)")
+    time.sleep(10)
+    yield emit("gripper_close", "Gripping after imaging")
+    gripper.close()
+    sleep(10)
+    yield emit("move_to_decap_pose_up", "Moving to decap position (up)")
+    move_to_decap_pose_up(rtde_c, rtde_r, gripper)
+    yield emit("move_to_decap_table", "Moving to decap table")
+    move_to_decap_table(rtde_c, rtde_r, gripper)
+    sleep(10)
+    yield emit("gripper_open", "Releasing at decap table")
+    gripper.open()
+    yield emit("move_to_decap_away", "Moving away from decap table")
+    move_to_decap_away(rtde_c, rtde_r, gripper)
+
+    yield emit("move_to_fridge", "Moving to fridge")
+    move_to_fridge(rtde_c, rtde_r, gripper)
+    yield emit("move_to_fridge_door", "Moving to fridge door")
+    move_to_fridge_door(rtde_c, rtde_r, gripper)
+    yield emit("open_fridge_door", "Opening fridge door")
+    open_fridge_door(rtde_c, rtde_r, gripper)
+    yield emit("back_from_fridge_door", "Back from fridge door")
+    back_from_fridge_door(rtde_c, rtde_r, gripper)
+    yield emit("move_to_away_from_reagent", "Moving away from reagent")
+    move_to_away_from_reagent(rtde_c, rtde_r, gripper)
+    yield emit("move_to_reagent", "Moving to reagent")
+    move_to_reagent(rtde_c, rtde_r, gripper)
+    yield emit("gripper_close", "Gripping reagent")
+    gripper.close()
+    yield emit("move_to_away_from_reagent", "Moving away from reagent")
+    move_to_away_from_reagent(rtde_c, rtde_r, gripper)
+    yield emit("move_to_reagent_table_away", "Moving to reagent table (away)")
+    move_to_reagent_table_away(rtde_c, rtde_r, gripper)
+    yield emit("move_to_reagent_table", "Moving to reagent table")
+    move_to_reagent_table(rtde_c, rtde_r, gripper)
+    yield emit("gripper_open", "Dispensing reagent")
+    gripper.open()
+    yield emit("move_to_reagent_table_away", "Moving away from reagent table")
+    move_to_reagent_table_away(rtde_c, rtde_r, gripper)
+    yield emit("move_to_decap_away", "Moving to decap (away)")
+    move_to_decap_away(rtde_c, rtde_r, gripper)
+    yield emit("move_to_decap_table", "Moving to decap table")
+    move_to_decap_table(rtde_c, rtde_r, gripper)
+    yield emit("gripper_close", "Gripping cap")
+    gripper.close()
+    yield emit("move_outside_incubator", "Moving outside incubator")
+    move_outside_incubator(rtde_c, rtde_r, gripper)
+    yield emit("move_inside_incubator", "Moving inside incubator (return flask)")
+    move_inside_incubator(rtde_c, rtde_r, gripper)
+    yield emit("gripper_open", "Releasing flask in incubator")
+    gripper.open()
+    yield emit("move_outside_incubator", "Moving outside incubator (done)")
+    move_outside_incubator(rtde_c, rtde_r, gripper)
+    yield emit("done", "Protocol 2 complete")
 
 
 def run():
