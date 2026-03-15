@@ -1,8 +1,5 @@
 import rtde_control
 
-import time
-from time import sleep
-
 from robotiq_gripper_control import RobotiqGripper
 from rtde_control import RTDEControlInterface
 from rtde_receive import RTDEReceiveInterface
@@ -28,6 +25,20 @@ BACK_FROM_FRIDGE_DOOR_POSE = [-0.925, -0.243, -0.338, 0.008, -2.123, 2.269]  # b
 TO_AWAY_FROM_REAGENT_POSE = [-0.774, -0.274, -0.131, 0.008, -2.123, 2.269]  # away from the reagent pose -> random right now
 TO_REAGENT_POSE = [-0.774, -0.444, -0.131, 0.008, -2.123, 2.269]  # to the reagent pose -> random right now
 
+# Waypoints for INC -> MICROSCOPE: lift, then move at safe height, then descend (avoids curved moveJ going out of bounds)
+# Format: [x, y, z, rx, ry, rz]. Same orientation as INC/MICROSCOPE. Tune safe_z and mid point to your workspace.
+INC_TO_MICROSCOPE_SAFE_Z = 0.55  # m, clear height above table/obstacles
+INC_TO_MICROSCOPE_MID_XY = (-0.63, -0.438)  # (x, y) for mid waypoint above table
+INC_TO_MICROSCOPE_WAYPOINTS = [
+    [OUT_INC_POSE[0], OUT_INC_POSE[1], INC_TO_MICROSCOPE_SAFE_Z, 0.008, -2.123, 2.269],   # lift at incubator
+    [INC_TO_MICROSCOPE_MID_XY[0], INC_TO_MICROSCOPE_MID_XY[1], INC_TO_MICROSCOPE_SAFE_Z, 0.008, -2.123, 2.269],
+    list(TO_MICROSCOPE_POSE),                                                               # microscope (copy)
+]
+MICROSCOPE_TO_INC_WAYPOINTS = [
+    [INC_TO_MICROSCOPE_MID_XY[0], INC_TO_MICROSCOPE_MID_XY[1], INC_TO_MICROSCOPE_SAFE_Z, 0.008, -2.123, 2.269],
+    [OUT_INC_POSE[0], OUT_INC_POSE[1], INC_TO_MICROSCOPE_SAFE_Z, 0.008, -2.123, 2.269],
+    list(OUT_INC_POSE),
+]
 
 SPEED = 0.2        # m/s
 ACCEL = 0.2        # m/s^2
@@ -53,7 +64,28 @@ def move_outside_incubator(rtde_c, gripper):
     rtde_c.moveL(OUT_INC_POSE, SPEED, ACCEL)
 
 def move_towards_opener(rtde_c, gripper):
-    rtde_c.moveJ(OPENER_POSE, SPEED, ACCEL)
+    rtde_c.moveJ(TO_OPENER_POSE, SPEED, ACCEL)
+
+
+def moveL_path(rtde_c, waypoints, speed=SPEED, accel=ACCEL):
+    """
+    Move through a sequence of Cartesian waypoints using linear (moveL) segments.
+    This keeps the path piecewise linear and within the specified waypoints,
+    avoiding the large curved motion that moveJ can produce in Cartesian space.
+    waypoints: list of 6D poses [x, y, z, rx, ry, rz].
+    """
+    for pose in waypoints:
+        rtde_c.moveL(pose, speed, accel)
+
+
+def path_incubator_to_microscope(rtde_c, speed=SPEED, accel=ACCEL):
+    """Move from outside incubator to microscope via safe waypoints (lift → over → descend)."""
+    moveL_path(rtde_c, INC_TO_MICROSCOPE_WAYPOINTS, speed, accel)
+
+
+def path_microscope_to_incubator(rtde_c, speed=SPEED, accel=ACCEL):
+    """Move from microscope back to outside incubator via same safe corridor (reverse)."""
+    moveL_path(rtde_c, MICROSCOPE_TO_INC_WAYPOINTS, speed, accel)
 
 
 def shake(rtde_c, rtde_r, n_shakes=4, tilt_angle=0.15, speed=0.15):
@@ -72,39 +104,12 @@ def shake(rtde_c, rtde_r, n_shakes=4, tilt_angle=0.15, speed=0.15):
 
 
 def run():
-    # rtde_c, rtde_r, gripper = init_robot()   # step 1
-    # move_inside_incubator(rtde_c, gripper)   # step 2
-    # gripper.close()  # step 3: grip the object
-    # move_outside_incubator(rtde_c, gripper)   # step 3
-    # shake(rtde_c, rtde_r)   # step 4: shake the object
-    # move_towards_opener(rtde_c, gripper)   # step 4
-    # gripper.close()   # step 5
-    # rtde_c.stopScript()
-    # rtde_c.disconnect()
-
-
-
-    # workflow 1
-    rtde_c, rtde_r, gripper = init_robot()   # step 1
-    ## rtde_c.moveJ(OUT_INC_POSE, SPEED, ACCEL)  # assume the robot is at the outside of the incubator
-    # rtde_c.moveL(INS_INC_POSE, SPEED, ACCEL)
-    # gripper.close()  # step 3: grip the object
-    # rtde_c.moveL(OUT_INC_POSE, SPEED, ACCEL)
-    # rtde_c.moveJ(TO_MICROSCOPE_POSE, SPEED, ACCEL)
-    # gripper.open()
-    # sleep(10)
-    # gripper.close()
-    # rtde_c.moveJ(OUT_INC_POSE, SPEED, ACCEL)
-    # rtde_c.moveL(INS_INC_POSE, SPEED, ACCEL)
-    # gripper.open()
-    # rtde_c.moveL(OUT_INC_POSE, SPEED, ACCEL)
-    # gripper.close()   # step 5
-    # rtde_c.stopScript()
-    # rtde_c.disconnect()
-
-    rtde_c.moveL(INS_INC_POSE, SPEED, ACCEL)
-    gripper.close()  # step 3: grip the object
-    rtde_c.moveL(OUT_INC_POSE, SPEED, ACCEL)
+    """Single test motion: OUT_INC_POSE → microscope via control-point waypoints."""
+    rtde_c, rtde_r, gripper = init_robot()
+    rtde_c.moveL(OUT_INC_POSE, SPEED, ACCEL)  # start at outside incubator
+    path_incubator_to_microscope(rtde_c)      # waypoint path to microscope
+    rtde_c.stopScript()
+    rtde_c.disconnect()
 
 
 if __name__ == "__main__":
