@@ -63,8 +63,14 @@ OPEN_FRIDGE_DOOR_POSE = [-0.924, -0.328, -0.338, 0.008, -2.123, 2.269]  # open t
 BACK_FROM_FRIDGE_DOOR_POSE = [-0.925, -0.243, -0.338, 0.008, -2.123, 2.269]  # back from the fridge pose -> random right now
 
 TO_AWAY_FROM_REAGENT_POSE = [-0.774, -0.074, -0.131, 0.008, -2.123, 2.169]  # away from the reagent pose -> random right now
-TO_REAGENT_POSE = [-0.774, -0.444, -0.131, 0.008, -2.123, 2.269]  # to the reagent pose -> random right now
+TO_REAGENT_POSE = [-0.764, -0.453, -0.142, 0.008, -2.123, 2.269]  # to the reagent pose -> random right now
 
+TO_DECAP_POSE = [-0.530, -0.437, 0.165, 0.008, -2.123, 2.269]  # to the decapotentable pose -> random right now
+TO_DECAP_POSE_UP = [-0.530, -0.437, 0.277, 0.008, -2.123, 2.269]  # to the decapotentable pose -> random right now
+TO_DECAP_AWAY_POSE = [-0.530, -0.237, 0.165, 0.008, -2.123, 2.269]  # to the decap away pose -> random right now
+
+TO_REAGENT_TABLE_POSE = [-0.707, -0.443, 0.181, 0.008, -2.123, 2.269]  # to the reagent table pose -> random right now
+TO_REAGENT_TABLE_AWAY_POSE = [-0.707, -0.243, 0.181, 0.008, -2.123, 2.269]  # to the reagent table away pose -> random right now
 
 SPEED = 0.2        # m/s
 ACCEL = 0.2        # m/s^2
@@ -94,7 +100,7 @@ def init_robot():
     gripper = RobotiqGripper(rtde_c)
     
     # activate gripper
-    gripper.activate()
+    # gripper.activate()
     gripper.set_force(FORCE)
     gripper.open()
     return rtde_c, rtde_r, gripper
@@ -156,6 +162,20 @@ def move_to_reagent(rtde_c, rtde_r, gripper):
     _move_to_pose(rtde_c, rtde_r, TO_REAGENT_POSE)
 
 
+def move_to_decap_table(rtde_c, rtde_r, gripper):
+    _move_to_pose(rtde_c, rtde_r, TO_DECAP_POSE)
+
+def move_to_decap_away(rtde_c, rtde_r, gripper):
+    _move_to_pose(rtde_c, rtde_r, TO_DECAP_AWAY_POSE)
+
+def move_to_decap_pose_up(rtde_c, rtde_r, gripper):
+    _move_to_pose(rtde_c, rtde_r, TO_DECAP_POSE_UP)
+
+def move_to_reagent_table(rtde_c, rtde_r, gripper):
+    _move_to_pose(rtde_c, rtde_r, TO_REAGENT_TABLE_POSE)
+
+def move_to_reagent_table_away(rtde_c, rtde_r, gripper):
+    _move_to_pose(rtde_c, rtde_r, TO_REAGENT_TABLE_AWAY_POSE)
 
 def shake(rtde_c, rtde_r, n_shakes=4, tilt_angle=0.15, speed=0.15):
     """Rotate the gripper along the y-axis, tilting left and right a few times."""
@@ -170,6 +190,55 @@ def shake(rtde_c, rtde_r, n_shakes=4, tilt_angle=0.15, speed=0.15):
         rtde_c.moveL(right, speed, ACCEL)
     # return to original pose
     rtde_c.moveL(pose, speed, ACCEL)
+
+def protocol_1(rtde_c, rtde_r, gripper):
+    move_outside_incubator(rtde_c, rtde_r, gripper)  # step 1
+    move_inside_incubator(rtde_c, rtde_r, gripper)
+    gripper.close()
+    move_outside_incubator(rtde_c, rtde_r, gripper) 
+    move_to_microscope(rtde_c, rtde_r, gripper)
+    gripper.open()
+    time.sleep(10)
+    gripper.close()
+    move_outside_incubator(rtde_c, rtde_r, gripper)
+    move_inside_incubator(rtde_c, rtde_r, gripper)
+    gripper.open()
+    move_outside_incubator(rtde_c, rtde_r, gripper)
+    
+
+def protocol_2(rtde_c, rtde_r, gripper):
+    move_outside_incubator(rtde_c, rtde_r, gripper)  # step 1
+    move_inside_incubator(rtde_c, rtde_r, gripper)
+    gripper.close()
+    move_outside_incubator(rtde_c, rtde_r, gripper) 
+    move_to_microscope(rtde_c, rtde_r, gripper)
+    gripper.open()
+    time.sleep(10)
+    gripper.close()
+    move_to_decap_pose_up(rtde_c, rtde_r, gripper)
+    move_to_decap_table(rtde_c, rtde_r, gripper)
+    gripper.open()
+    move_to_decap_away(rtde_c, rtde_r, gripper)
+
+    move_to_fridge(rtde_c, rtde_r, gripper)
+    move_to_fridge_door(rtde_c, rtde_r, gripper)
+    open_fridge_door(rtde_c, rtde_r, gripper)
+    back_from_fridge_door(rtde_c, rtde_r, gripper)
+    move_to_away_from_reagent(rtde_c, rtde_r, gripper)
+    move_to_reagent(rtde_c, rtde_r, gripper)
+    gripper.close()
+    move_to_away_from_reagent(rtde_c, rtde_r, gripper)
+    move_to_reagent_table_away(rtde_c, rtde_r, gripper)
+    move_to_reagent_table(rtde_c, rtde_r, gripper)
+    gripper.open()
+    move_to_reagent_table_away(rtde_c, rtde_r, gripper)
+    move_to_decap_away(rtde_c, rtde_r, gripper)
+    move_to_decap_table(rtde_c, rtde_r, gripper)
+    gripper.close()
+    move_outside_incubator(rtde_c, rtde_r, gripper)
+    move_inside_incubator(rtde_c, rtde_r, gripper)
+    gripper.open()
+    move_outside_incubator(rtde_c, rtde_r, gripper)
 
 
 def run():
@@ -202,11 +271,10 @@ def run():
     # gripper.close()   # step 5
     # rtde_c.stopScript()
     # rtde_c.disconnect()
-    # move_outside_incubator(rtde_c, rtde_r, gripper)  # step 1
-    # move_inside_incubator(rtde_c, rtde_r, gripper)
-    # move_outside_incubator(rtde_c, rtde_r, gripper) 
-    # move_to_microscope(rtde_c, rtde_r, gripper)
-    # move_outside_incubator(rtde_c, rtde_r, gripper)
+
+
+
+    
     # # move_away_from_microscope(rtde_c, rtde_r, gripper)
     # move_to_fridge(rtde_c, rtde_r, gripper)
     # move_to_fridge_door(rtde_c, rtde_r, gripper)
@@ -217,10 +285,10 @@ def run():
     # move_to_away_from_reagent(rtde_c, rtde_r, gripper)
     # move_to_reagent(rtde_c, rtde_r, gripper)
     # gripper.close()
-    move_to_away_from_reagent(rtde_c, rtde_r, gripper)
-    move_outside_incubator(rtde_c, rtde_r, gripper)
-    move_to_microscope(rtde_c, rtde_r, gripper)
-    # gripper.open()
+    # move_to_away_from_reagent(r`tde_c, rtde_r, gripper)
+    # move_outside_incubator(rtde_c, rtde_r, gripper)
+    # move_to_microscope(rtde_c, rt`de_r, gripper)
+    # # gripper.open()
     
 
 
